@@ -23,15 +23,20 @@ export default function App() {
   const [stats, setStats] = useState({ nodes: 0, edges: 0 });
   const [loading, setLoading] = useState(false);
   const [fitTrigger, setFitTrigger] = useState(0);
-  const [backendOnline, setBackendOnline] = useState(true);
+  const [healthStatus, setHealthStatus] = useState({
+    backendOnline: true,
+    neo4jOnline: true,
+    neo4jError: null,
+  });
   const [detailsMinimized, setDetailsMinimized] = useState(false);
   const [legendMinimized, setLegendMinimized] = useState(false);
   const cyRef = useRef(null);
   const resultsTopRef = useRef(null);
 
   useEffect(() => {
-    checkHealth().then(setBackendOnline);
-    const interval = setInterval(() => checkHealth().then(setBackendOnline), 15000);
+    const refreshHealth = () => checkHealth().then(setHealthStatus);
+    refreshHealth();
+    const interval = setInterval(refreshHealth, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -114,6 +119,18 @@ export default function App() {
     ? (cohortResult.offset ?? 0) + (cohortResult.total ?? 0)
     : 0;
 
+  const statusClass = !healthStatus.backendOnline
+    ? "offline"
+    : healthStatus.neo4jOnline
+      ? "online"
+      : "degraded";
+
+  const statusLabel = !healthStatus.backendOnline
+    ? "API offline"
+    : healthStatus.neo4jOnline
+      ? "Connected"
+      : "Neo4j offline";
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -123,13 +140,25 @@ export default function App() {
           <span className="app-header-product">EHR Explorer</span>
         </div>
         <div className="app-header-actions">
-          <div className={`status-pill ${backendOnline ? "online" : "offline"}`}>
+          <div className={`status-pill ${statusClass}`} title={healthStatus.neo4jError ?? ""}>
             <span className="status-dot" />
-            {backendOnline ? "Connected" : "Offline"}
+            {statusLabel}
           </div>
           <ThemeToggle theme={theme} onToggle={toggleTheme} />
         </div>
       </header>
+
+      {!healthStatus.backendOnline && (
+        <div className="system-banner offline">
+          {healthStatus.neo4jError ?? "Cannot reach backend API. Start the server on port 8002."}
+        </div>
+      )}
+
+      {healthStatus.backendOnline && !healthStatus.neo4jOnline && (
+        <div className="system-banner degraded">
+          {healthStatus.neo4jError ?? "Neo4j is not running. Start your local Neo4j instance to search patients."}
+        </div>
+      )}
 
       <div className="app-body">
         <CohortPanel

@@ -8,6 +8,7 @@ import {
   registerFcose,
   runBloomLayout,
 } from "./layout";
+import { resolveEdgeRel } from "./edgeLabels";
 
 registerFcose(Cytoscape);
 
@@ -112,7 +113,7 @@ export default function GraphCanvas({
 
           const data = ensureShortLabel(child.data);
           const pos = positions[i] ?? { x: parentPos.x + 140, y: parentPos.y };
-          const classes = [];
+          const classes = ["show-label"];
           if (data.expandable) classes.push("expandable");
           if (data.expanded) classes.push("expanded");
 
@@ -123,19 +124,28 @@ export default function GraphCanvas({
             classes: classes.join(" "),
           });
 
+          const relType = resolveEdgeRel(
+            node.data("type"),
+            data.type,
+            node.data("context"),
+            data
+          );
+
           cy.add({
             group: "edges",
             data: {
               id: `${node.id()}->${child.data.id}`,
               source: node.id(),
               target: child.data.id,
+              relType,
             },
           });
         });
 
         node.data("expanded", true);
         node.removeClass("loading");
-        node.addClass("expanded");
+        node.addClass("expanded show-label");
+        node.neighborhood().nodes().addClass("show-label");
       });
 
       await runBloomLayout(cy, node);

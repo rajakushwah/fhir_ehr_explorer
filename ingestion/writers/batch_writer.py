@@ -1,12 +1,13 @@
-"""Write mapped bundle payloads to Neo4j in batched UNWIND transactions."""
+"""Write mapped bundle payloads to Neo4j — single transaction, combined Cypher."""
 
 from __future__ import annotations
 
 from typing import Any
 
+from ingestion.config import INGEST_CYPHER_BATCH_SIZE
 from ingestion.mappers.bundle_mapper import GraphPayload
 
-BATCH = 500
+BATCH = INGEST_CYPHER_BATCH_SIZE
 
 LABELS = [
     "Organization",
@@ -23,13 +24,28 @@ LABELS = [
     "DiagnosticReport",
 ]
 
+PATIENT_REL_LABEL = {
+    "HAS_CONDITION": "Condition",
+    "HAS_OBSERVATION": "Observation",
+    "HAS_ENCOUNTER": "Encounter",
+    "HAS_PROCEDURE": "Procedure",
+    "HAS_MEDICATION": "MedicationRequest",
+    "HAS_ALLERGY": "AllergyIntolerance",
+    "HAS_IMMUNIZATION": "Immunization",
+    "HAS_DIAGNOSTIC_REPORT": "DiagnosticReport",
+}
+
 
 def _chunks(items: list, size: int):
     for i in range(0, len(items), size):
         yield items[i : i + size]
 
 
-def _write_nodes(session, label: str, rows: list[dict[str, Any]]) -> None:
+def _run(tx, query: str, **params: Any) -> None:
+    tx.run(query, **params)
+
+
+def _write_nodes(tx, label: str, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
     prepared = [
@@ -37,7 +53,8 @@ def _write_nodes(session, label: str, rows: list[dict[str, Any]]) -> None:
         for row in rows
     ]
     for batch in _chunks(prepared, BATCH):
-        session.run(
+        _run(
+            tx,
             f"""
             UNWIND $rows AS row
             MERGE (n:{label} {{fhirId: row.fhirId}})
@@ -47,64 +64,18 @@ def _write_nodes(session, label: str, rows: list[dict[str, Any]]) -> None:
         )
 
 
-def _write_concepts(session, links: list[dict[str, str]]) -> None:
-    if not links:
-        return
-    unique = {(l["system"], l["code"]): l.get("display", l["code"]) for l in links}
-    rows = sorted(
-        [{"system": s, "code": c, "display": d, "text": d} for (s, c), d in unique.items()],
-        key=lambda r: (r["system"], r["code"]),
-    )
-    for batch in _chunks(rows, BATCH):
-        session.run(
-            """
-            UNWIND $rows AS row
-            MERGE (c:Concept {system: row.system, code: row.code})
-            SET c.display = coalesce(row.display, c.display),
-                c.text = coalesce(row.text, c.text)
-            """,
-            rows=batch,
-        )
-
-
-def _write_patient_links(session, links: list[dict[str, str]]) -> None:
-    if not links:
-        return
-    for batch in _chunks(links, BATCH):
-        session.run(
-            """
-            UNWIND $rows AS row
-            MATCH (p:Patient {fhirId: row.patientFhirId})
-            MATCH (r {fhirId: row.resourceFhirId})
-            CALL apoc.merge.relationship(p, row.rel, {}, {}, r) YIELD rel
-            RETURN count(rel)
-            """,
-            rows=batch,
-        )
-
-
-def _write_patient_links_no_apoc(session, links: list[dict[str, str]]) -> None:
+def _write_patient_links(tx, links: list[dict[str, str]]) -> None:
     if not links:
         return
     grouped: dict[str, list[dict]] = {}
     for link in links:
         grouped.setdefault(link["rel"], []).append(link)
 
-    rel_label = {
-        "HAS_CONDITION": "Condition",
-        "HAS_OBSERVATION": "Observation",
-        "HAS_ENCOUNTER": "Encounter",
-        "HAS_PROCEDURE": "Procedure",
-        "HAS_MEDICATION": "MedicationRequest",
-        "HAS_ALLERGY": "AllergyIntolerance",
-        "HAS_IMMUNIZATION": "Immunization",
-        "HAS_DIAGNOSTIC_REPORT": "DiagnosticReport",
-    }
-
     for rel, batch_links in grouped.items():
-        label = rel_label[rel]
+        label = PATIENT_REL_LABEL[rel]
         for batch in _chunks(batch_links, BATCH):
-            session.run(
+            _run(
+                tx,
                 f"""
                 UNWIND $rows AS row
                 MATCH (p:Patient {{fhirId: row.patientFhirId}})
@@ -115,28 +86,38 @@ def _write_patient_links_no_apoc(session, links: list[dict[str, str]]) -> None:
             )
 
 
-def _write_concept_links(session, links: list[dict[str, str]]) -> None:
+def _write_concept_links(tx, links: list[dict[str, str]]) -> None:
+    """MERGE concepts and CODED_AS in one pass (replaces separate concept node write)."""
     if not links:
         return
-    for batch in _chunks(links, BATCH):
-        session.run(
+    unique: dict[tuple[str, str, str], dict[str, str]] = {}
+    for link in links:
+        key = (link["resourceFhirId"], link["system"], link["code"])
+        unique[key] = link
+
+    rows = list(unique.values())
+    for batch in _chunks(rows, BATCH):
+        _run(
+            tx,
             """
             UNWIND $rows AS row
-            MATCH (r {fhirId: row.resourceFhirId})
             MERGE (c:Concept {system: row.system, code: row.code})
             SET c.display = coalesce(row.display, c.display),
                 c.text = coalesce(row.display, c.text)
+            WITH c, row
+            MATCH (r {fhirId: row.resourceFhirId})
             MERGE (r)-[:CODED_AS]->(c)
             """,
             rows=batch,
         )
 
 
-def _write_encounter_links(session, links: list[dict[str, str]]) -> None:
+def _write_encounter_links(tx, links: list[dict[str, str]]) -> None:
     if not links:
         return
     for batch in _chunks(links, BATCH):
-        session.run(
+        _run(
+            tx,
             """
             UNWIND $rows AS row
             MATCH (r {fhirId: row.resourceFhirId})
@@ -147,11 +128,12 @@ def _write_encounter_links(session, links: list[dict[str, str]]) -> None:
         )
 
 
-def _write_org_links(session, links: list[dict[str, str]]) -> None:
+def _write_org_links(tx, links: list[dict[str, str]]) -> None:
     if not links:
         return
     for batch in _chunks(links, BATCH):
-        session.run(
+        _run(
+            tx,
             """
             UNWIND $rows AS row
             MATCH (e:Encounter {fhirId: row.encounterFhirId})
@@ -162,11 +144,12 @@ def _write_org_links(session, links: list[dict[str, str]]) -> None:
         )
 
 
-def _write_location_links(session, links: list[dict[str, str]]) -> None:
+def _write_location_links(tx, links: list[dict[str, str]]) -> None:
     if not links:
         return
     for batch in _chunks(links, BATCH):
-        session.run(
+        _run(
+            tx,
             """
             UNWIND $rows AS row
             MATCH (e:Encounter {fhirId: row.encounterFhirId})
@@ -177,18 +160,27 @@ def _write_location_links(session, links: list[dict[str, str]]) -> None:
         )
 
 
-def write_payload(session, payload: GraphPayload, use_apoc: bool = False) -> None:
+def write_payload_tx(tx, payload: GraphPayload) -> None:
+    """Write one patient payload inside an existing transaction."""
     for label in LABELS:
-        _write_nodes(session, label, payload.nodes.get(label, []))
+        _write_nodes(tx, label, payload.nodes.get(label, []))
 
-    _write_concepts(session, payload.concept_links)
+    _write_patient_links(tx, payload.patient_links)
+    _write_concept_links(tx, payload.concept_links)
+    _write_encounter_links(tx, payload.encounter_links)
+    _write_org_links(tx, payload.org_links)
+    _write_location_links(tx, payload.location_links)
 
-    if use_apoc:
-        _write_patient_links(session, payload.patient_links)
-    else:
-        _write_patient_links_no_apoc(session, payload.patient_links)
 
-    _write_concept_links(session, payload.concept_links)
-    _write_encounter_links(session, payload.encounter_links)
-    _write_org_links(session, payload.org_links)
-    _write_location_links(session, payload.location_links)
+def write_payloads_tx(tx, payloads: list[GraphPayload]) -> None:
+    """Write multiple patient payloads in a single transaction."""
+    for payload in payloads:
+        write_payload_tx(tx, payload)
+
+
+def write_payload(session, payload: GraphPayload) -> None:
+    session.execute_write(write_payload_tx, payload)
+
+
+def write_payloads_batch(session, payloads: list[GraphPayload]) -> None:
+    session.execute_write(write_payloads_tx, payloads)

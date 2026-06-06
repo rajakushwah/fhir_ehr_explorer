@@ -10,6 +10,20 @@ function logApi(level, message, detail = {}) {
   console[level](`[EHR Explorer] ${message}${suffix}`);
 }
 
+async function parseErrorResponse(res) {
+  const text = await res.text().catch(() => "");
+  try {
+    const json = JSON.parse(text);
+    if (typeof json.detail === "string") return json.detail;
+    if (Array.isArray(json.detail)) {
+      return json.detail.map((d) => d.msg ?? JSON.stringify(d)).join("; ");
+    }
+  } catch {
+    // not JSON
+  }
+  return text || `Request failed (${res.status})`;
+}
+
 async function request(path, body, label) {
   const t0 = performance.now();
 
@@ -25,17 +39,17 @@ async function request(path, body, label) {
     const ms = performance.now() - t0;
 
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
+      const detail = await parseErrorResponse(res);
       logApi("error", `${label} ✗ failed`, {
         status: res.status,
         ms: Math.round(ms),
-        body: text.slice(0, 200),
+        detail,
       });
-      throw new Error(`${label} failed (${res.status})`);
+      throw new Error(detail);
     }
 
     const data = await res.json();
-    const count = Array.isArray(data) ? data.length : data.nodes?.length ?? 0;
+    const count = Array.isArray(data) ? data.length : data.nodes?.length ?? data.total ?? 0;
 
     logApi("info", `${label} ✓ ok`, {
       ms: Math.round(ms),
@@ -45,6 +59,11 @@ async function request(path, body, label) {
     return data;
   } catch (err) {
     const ms = performance.now() - t0;
+    if (err instanceof TypeError && err.message.includes("fetch")) {
+      const msg = "Cannot reach backend API. Is the server running on port 8002?";
+      logApi("error", `${label} ✗ offline`, { ms: Math.round(ms), error: msg });
+      throw new Error(msg);
+    }
     if (!(err instanceof Error && err.message.includes("failed"))) {
       logApi("error", `${label} ✗ error`, {
         ms: Math.round(ms),
@@ -76,10 +95,19 @@ export async function getCohortFilters() {
   const t0 = performance.now();
   try {
     const res = await fetch(`${BASE_URL}/cohort/filters`);
-    if (!res.ok) throw new Error("Failed to load filters");
+    if (!res.ok) {
+      const detail = await parseErrorResponse(res);
+      throw new Error(detail);
+    }
     return res.json();
   } catch (err) {
-    logApi("error", "cohort/filters ✗", { error: err.message, ms: Math.round(performance.now() - t0) });
+    if (err instanceof TypeError) {
+      throw new Error("Cannot reach backend API. Is the server running on port 8002?");
+    }
+    logApi("error", "cohort/filters ✗", {
+      error: err.message,
+      ms: Math.round(performance.now() - t0),
+    });
     throw err;
   }
 }
@@ -88,16 +116,35 @@ export async function checkHealth() {
   const t0 = performance.now();
   try {
     const res = await fetch(`${BASE_URL}/health`);
-    logApi("debug", "health ✓", {
+    if (!res.ok) {
+      return {
+        backendOnline: false,
+        neo4jOnline: false,
+        status: "offline",
+        neo4jError: "Backend API is not responding.",
+      };
+    }
+    const data = await res.json();
+    logApi("debug", "health", {
       ms: Math.round(performance.now() - t0),
-      ok: res.ok,
+      ...data,
     });
-    return res.ok;
+    return {
+      backendOnline: true,
+      neo4jOnline: Boolean(data.neo4j),
+      status: data.status ?? "ok",
+      neo4jError: data.neo4jError ?? null,
+    };
   } catch (err) {
     logApi("warn", "health ✗ offline", {
       ms: Math.round(performance.now() - t0),
       error: err.message,
     });
-    return false;
+    return {
+      backendOnline: false,
+      neo4jOnline: false,
+      status: "offline",
+      neo4jError: "Cannot reach backend API. Is the server running on port 8002?",
+    };
   }
 }

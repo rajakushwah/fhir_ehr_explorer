@@ -1,5 +1,4 @@
 import { getNodeTypeColor } from "./GraphCanvas/layout";
-import { NODE_ICON_URLS } from "./GraphCanvas/nodeIcons";
 
 export const LEGEND_ITEMS = [
   { type: "Concept", label: "Clinical Concept", doc: "Concept node" },
@@ -12,6 +11,10 @@ export const LEGEND_ITEMS = [
   { type: "Observation", label: "Observation", doc: "FHIR Observation" },
   { type: "AllergyIntolerance", label: "Allergy", doc: "FHIR AllergyIntolerance" },
   { type: "Encounter", label: "Encounter", doc: "FHIR Encounter" },
+  { type: "Procedure", label: "Procedure", doc: "FHIR Procedure" },
+  { type: "MedicationRequest", label: "Medication", doc: "FHIR MedicationRequest" },
+  { type: "Immunization", label: "Immunization", doc: "FHIR Immunization" },
+  { type: "DiagnosticReport", label: "Diagnostic Report", doc: "FHIR DiagnosticReport" },
 ];
 
 export default function GraphLegend({ minimized, onToggleMinimize }) {
@@ -56,13 +59,7 @@ export default function GraphLegend({ minimized, onToggleMinimize }) {
           <li key={type}>
             <span
               className="legend-swatch"
-              style={{
-                backgroundColor: getNodeTypeColor(type),
-                backgroundImage: NODE_ICON_URLS[type] ? `url("${NODE_ICON_URLS[type]}")` : undefined,
-                backgroundSize: "60%",
-                backgroundRepeat: "no-repeat",
-                backgroundPosition: "center",
-              }}
+              style={{ backgroundColor: getNodeTypeColor(type) }}
             />
             <span className="legend-text">
               <strong>{label}</strong>
@@ -72,7 +69,7 @@ export default function GraphLegend({ minimized, onToggleMinimize }) {
         ))}
       </ul>
       <p className="legend-hint">
-        Navy border = expandable · Double-click to explore
+        Thin blue border = expandable · Double-click to explore
       </p>
     </aside>
   );

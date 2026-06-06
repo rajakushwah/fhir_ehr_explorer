@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from app.schemas.graph import ExpandRequest
@@ -9,8 +11,11 @@ from app.services.expand_service import (
     build_patients,
     build_region_filters,
 )
+from app.utils.neo4j_errors import handle_db_error
+from app.utils.timing import timed_step
 
 router = APIRouter(prefix="/graph")
+logger = logging.getLogger("graph.expand")
 
 
 def _dispatch_expand(node_type: str, ctx: dict) -> list:
@@ -45,16 +50,22 @@ def _dispatch_expand(node_type: str, ctx: dict) -> list:
 
 @router.post("/expand")
 def expand(req: ExpandRequest):
-    try:
-        nodes = _dispatch_expand(req.nodeType, req.context)
-        return {"nodes": nodes}
-    except KeyError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Missing required context field for {req.nodeType}: {exc}",
-        ) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Expand failed for {req.nodeType}: {exc}",
-        ) from exc
+    with timed_step(logger, "graph/expand", nodeType=req.nodeType) as metrics:
+        try:
+            nodes = _dispatch_expand(req.nodeType, req.context)
+            metrics["summary"] = f"count={len(nodes)}"
+            return {"nodes": nodes}
+        except KeyError as exc:
+            logger.error(
+                "[FAIL]  graph/expand | nodeType=%s | missing field %s",
+                req.nodeType,
+                exc,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required context field for {req.nodeType}: {exc}",
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            handle_db_error(f"graph/expand/{req.nodeType}", exc)

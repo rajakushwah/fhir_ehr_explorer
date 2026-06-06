@@ -21,6 +21,7 @@ def search_concepts(search_text: str):
                 """,
                 q=q,
                 limit=MAX_SEARCH_RESULTS,
+                _log_op="search/fulltext",
             )
             rows = [r.data() for r in res]
             if rows:
@@ -38,5 +39,6 @@ def search_concepts(search_text: str):
             """,
             q=q,
             limit=MAX_SEARCH_RESULTS,
+            _log_op="search/fallback",
         )
         return [r.data() for r in res]

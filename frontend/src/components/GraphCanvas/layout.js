@@ -64,26 +64,30 @@ export function computeChildPositions(parentPos, count, options = {}) {
   return positions;
 }
 
-export function getNodeTypeColor(type) {
-  const colors = {
-    Concept: "#ec4899",
-    PatientGroup: "#6366f1",
-    Gender: "#8b5cf6",
-    Region: "#06b6d4",
-    Patient: "#203f68",
-    ClinicalCategory: "#203f68",
-    Condition: "#0ea5e9",
-    Observation: "#10b981",
-    AllergyIntolerance: "#f97316",
-    Encounter: "#ec4899",
-  };
-  return colors[type] ?? "#64748b";
+export { getNodeTypeColor } from "./nodeColors";
+
+const LABEL_LIMITS = {
+  Observation: 10,
+  Condition: 12,
+  AllergyIntolerance: 10,
+  Encounter: 12,
+  Gender: 8,
+  Region: 10,
+  Patient: 14,
+  Concept: 16,
+  PatientGroup: 14,
+  ClinicalCategory: 14,
+};
+
+function truncateForNode(label, type) {
+  const max = LABEL_LIMITS[type] ?? 12;
+  const cleaned = label.replace(/\s+/g, " ").trim();
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, max - 1)}…`;
 }
 
 export function ensureShortLabel(data) {
   const label = data.label || data.type || "Node";
-  const short =
-    data.shortLabel ||
-    (label.length > 26 ? `${label.slice(0, 24)}…` : label);
+  const short = data.shortLabel || truncateForNode(label, data.type);
   return { ...data, label, shortLabel: short, fullLabel: data.fullLabel || label };
 }

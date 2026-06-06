@@ -23,7 +23,7 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
   useEffect(() => {
     getCohortFilters()
       .then(setFilters)
-      .catch(() => {});
+      .catch((err) => setError(err.message));
   }, []);
 
   const runSearch = useCallback(async (payload) => {

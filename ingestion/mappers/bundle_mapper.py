@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ingestion.config import MapOptions, get_map_options
 from ingestion.fhir_utils import (
     extension_value,
     first_coding,
@@ -57,16 +58,48 @@ def _add_node(payload: GraphPayload, label: str, fhir_id: str, props: dict) -> N
     payload.nodes.setdefault(label, []).append({"fhirId": fhir_id, **props})
 
 
-def map_bundle(bundle: dict) -> GraphPayload:
+def _observation_category(resource: dict) -> str:
+    category = status_text((resource.get("category") or [{}])[0] if resource.get("category") else None)
+    return (category or "").lower().replace(" ", "-")
+
+
+def _keep_observation(resource: dict, options: MapOptions) -> bool:
+    category = _observation_category(resource)
+    if category in options.skip_observation_categories:
+        return False
+    if options.keep_observation_categories and category not in options.keep_observation_categories:
+        return False
+
+    sys, code, _ = first_coding(resource.get("code"))
+    value_num, _, value_string = observation_value(resource)
+    if not code and value_num is None and not value_string:
+        return False
+    return True
+
+
+def _filter_observations(resources: list[dict], options: MapOptions) -> list[dict]:
+    kept = [res for res in resources if _keep_observation(res, options)]
+    if options.max_observations_per_patient and len(kept) > options.max_observations_per_patient:
+        kept.sort(
+            key=lambda res: res.get("effectiveDateTime")
+            or (res.get("effectivePeriod") or {}).get("start")
+            or "",
+            reverse=True,
+        )
+        kept = kept[: options.max_observations_per_patient]
+    return kept
+
+
+def map_bundle(bundle: dict, options: MapOptions | None = None) -> GraphPayload:
+    options = options or get_map_options()
     index = BundleIndex(bundle)
     payload = GraphPayload()
-    patient_ids: set[str] = set()
 
     for org in index.by_type.get("Organization", []):
         _add_node(payload, "Organization", org["id"], {"name": (org.get("name") or "")[:200]})
 
     for loc in index.by_type.get("Location", []):
-        addr = (loc.get("address") or {})
+        addr = loc.get("address") or {}
         _add_node(
             payload,
             "Location",
@@ -85,7 +118,6 @@ def map_bundle(bundle: dict) -> GraphPayload:
 
     for patient in index.by_type.get("Patient", []):
         pid = patient["id"]
-        patient_ids.add(pid)
         addr = (patient.get("address") or [{}])[0]
         _add_node(
             payload,
@@ -159,7 +191,7 @@ def map_bundle(bundle: dict) -> GraphPayload:
                         "valueNum": value_num,
                         "valueUnit": value_unit,
                         "valueString": value_string,
-                        "category": status_text((res.get("category") or [{}])[0] if res.get("category") else None),
+                        "category": _observation_category(res),
                     }
                 )
             elif resource_type == "Procedure":
@@ -221,7 +253,7 @@ def map_bundle(bundle: dict) -> GraphPayload:
                     {"resourceType": resource_type, "resourceFhirId": rid, "encounterFhirId": enc_id}
                 )
 
-    for rtype in (
+    clinical_types = (
         "Condition",
         "Observation",
         "Procedure",
@@ -229,7 +261,11 @@ def map_bundle(bundle: dict) -> GraphPayload:
         "AllergyIntolerance",
         "Immunization",
         "DiagnosticReport",
-    ):
-        _map_clinical(rtype, index.by_type.get(rtype, []))
+    )
+    for rtype in clinical_types:
+        resources = index.by_type.get(rtype, [])
+        if rtype == "Observation":
+            resources = _filter_observations(resources, options)
+        _map_clinical(rtype, resources)
 
     return payload
