@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.db.neo4j import verify_connectivity
 from app.routers import cohort, graph, search
 
 app = FastAPI(
@@ -30,7 +31,11 @@ FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    neo4j_ok = verify_connectivity()
+    return {
+        "status": "ok" if neo4j_ok else "degraded",
+        "neo4j": neo4j_ok,
+    }
 
 
 if FRONTEND_DIST.is_dir():

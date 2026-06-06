@@ -51,6 +51,8 @@ npm run dev
 
 Open http://localhost:5174
 
+See [ARCHITECTURE.md](./ARCHITECTURE.md) for a short overview of what we build and how the system works.
+
 ## Graph Model
 
 ```
