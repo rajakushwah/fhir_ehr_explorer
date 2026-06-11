@@ -7,10 +7,12 @@ export default function GraphStatusBar({
   loading,
   onExplore,
   onExpand,
+  onCollapse,
 }) {
   const typeColor = selectedNode ? getNodeTypeColor(selectedNode.type) : null;
   const shortLabel = selectedNode?.label?.split("\n")[0] ?? selectedNode?.label;
   const canExpand = selectedNode?.expandable && !selectedNode?.expanded;
+  const canCollapse = !!selectedNode?.expanded;
 
   return (
     <div className="bloom-status-bar">
@@ -42,6 +44,16 @@ export default function GraphStatusBar({
               title="Expand to show connected nodes (or double-click the node)"
             >
               Expand
+            </button>
+          )}
+          {canCollapse && (
+            <button
+              type="button"
+              className="bloom-collapse-btn"
+              onClick={onCollapse}
+              title="Hide connected nodes (or right-click the node)"
+            >
+              Collapse
             </button>
           )}
           <button

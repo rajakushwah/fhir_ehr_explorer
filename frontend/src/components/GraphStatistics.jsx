@@ -12,10 +12,12 @@ export default function GraphStatistics({
   loading,
   hasGraph,
   minimized,
+  expandAllActive = false,
   expandLimit = 50,
   onExpandLimitChange,
   onToggleMinimize,
   onExpandAll,
+  onCancelExpandAll,
   onCollapseAll,
   onRelayout,
   onFit,
@@ -102,7 +104,20 @@ export default function GraphStatistics({
       </div>
 
       <div className="graph-stats-bottom">
-        {loading && <p className="graph-stats-loading">Expanding…</p>}
+        {expandAllActive ? (
+          <p className="graph-stats-loading graph-stats-loading-active">
+            Expanding all nodes…{" "}
+            <button
+              type="button"
+              className="graph-stats-cancel-link"
+              onClick={onCancelExpandAll}
+            >
+              Cancel
+            </button>
+          </p>
+        ) : (
+          loading && <p className="graph-stats-loading">Expanding…</p>
+        )}
 
         <label className="graph-stats-field">
           <span className="graph-stats-field-label">Patients per expand</span>
@@ -122,23 +137,37 @@ export default function GraphStatistics({
         </label>
 
         <div className="graph-stats-actions">
-          <button
-            type="button"
-            className="graph-stats-btn"
-            onClick={onExpandAll}
-            disabled={!hasGraph || loading}
-            title="Expand all expandable nodes"
-          >
-            <span className="graph-stats-btn-icon" aria-hidden>
-              ⊞
-            </span>
-            Expand All
-          </button>
+          {expandAllActive ? (
+            <button
+              type="button"
+              className="graph-stats-btn graph-stats-btn-danger"
+              onClick={onCancelExpandAll}
+              title="Stop expanding all nodes"
+            >
+              <span className="graph-stats-btn-icon" aria-hidden>
+                ■
+              </span>
+              Cancel Expand All
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="graph-stats-btn"
+              onClick={onExpandAll}
+              disabled={!hasGraph || loading}
+              title="Expand all expandable nodes"
+            >
+              <span className="graph-stats-btn-icon" aria-hidden>
+                ⊞
+              </span>
+              Expand All
+            </button>
+          )}
           <button
             type="button"
             className="graph-stats-btn"
             onClick={onCollapseAll}
-            disabled={!hasGraph || loading}
+            disabled={!hasGraph || (loading && !expandAllActive)}
             title="Collapse graph to root node"
           >
             <span className="graph-stats-btn-icon" aria-hidden>
@@ -150,7 +179,7 @@ export default function GraphStatistics({
             type="button"
             className="graph-stats-btn graph-stats-btn-primary"
             onClick={onRelayout}
-            disabled={!hasGraph || loading}
+            disabled={!hasGraph || (loading && !expandAllActive)}
             title="Re-run force-directed layout"
           >
             <span className="graph-stats-btn-icon" aria-hidden>

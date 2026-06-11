@@ -17,7 +17,7 @@ NODE_COLUMNS: dict[str, list[str]] = {
     "Organization": ["fhirId", "name"],
     "Location": ["fhirId", "name", "city", "state"],
     "Practitioner": ["fhirId", "name"],
-    "Patient": ["fhirId", "gender", "birthDate", "city", "state", "country", "postalCode", "race", "ethnicity"],
+    "Patient": ["fhirId", "name", "gender", "birthDate", "city", "state", "country", "postalCode", "race", "ethnicity"],
     "Encounter": [
         "fhirId", "status", "class", "periodStart", "periodEnd",
         "typeDisplay", "typeSystem", "typeCode",

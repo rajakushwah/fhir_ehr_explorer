@@ -3,10 +3,16 @@ export default function GraphLeftToolbar({
   onToggleStats,
   onRelayout,
   onExpandAll,
+  onCancelExpandAll,
+  expandAllActive = false,
   onCollapseAll,
   onClear,
   disabled,
+  expandDisabled,
 }) {
+  const graphDisabled = disabled && !expandAllActive;
+  const expandBtnDisabled = expandDisabled ?? graphDisabled;
+
   return (
     <div className="bloom-left-toolbar">
       <button
@@ -22,27 +28,39 @@ export default function GraphLeftToolbar({
         type="button"
         className="bloom-tool-btn"
         onClick={onRelayout}
-        disabled={disabled}
+        disabled={graphDisabled}
         title="Re-layout graph"
         aria-label="Re-layout graph"
       >
         ◎
       </button>
-      <button
-        type="button"
-        className="bloom-tool-btn"
-        onClick={onExpandAll}
-        disabled={disabled}
-        title="Expand all"
-        aria-label="Expand all"
-      >
-        ⊞
-      </button>
+      {expandAllActive ? (
+        <button
+          type="button"
+          className="bloom-tool-btn bloom-tool-btn-danger"
+          onClick={onCancelExpandAll}
+          title="Cancel expand all"
+          aria-label="Cancel expand all"
+        >
+          ■
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="bloom-tool-btn"
+          onClick={onExpandAll}
+          disabled={expandBtnDisabled}
+          title="Expand all"
+          aria-label="Expand all"
+        >
+          ⊞
+        </button>
+      )}
       <button
         type="button"
         className="bloom-tool-btn"
         onClick={onCollapseAll}
-        disabled={disabled}
+        disabled={graphDisabled}
         title="Collapse all"
         aria-label="Collapse all"
       >
@@ -52,7 +70,7 @@ export default function GraphLeftToolbar({
         type="button"
         className="bloom-tool-btn bloom-tool-btn-danger"
         onClick={onClear}
-        disabled={disabled}
+        disabled={graphDisabled}
         title="Clear graph"
         aria-label="Clear graph"
       >

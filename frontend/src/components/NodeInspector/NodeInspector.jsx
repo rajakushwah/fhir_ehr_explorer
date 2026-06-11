@@ -205,6 +205,7 @@ export default function NodeInspector({
   onFocusNode,
   onRevealNode,
   onDismissNode,
+  onCollapseNode,
 }) {
   const [tab, setTab] = useState("Properties");
   const [detail, setDetail] = useState(null);
@@ -387,6 +388,18 @@ export default function NodeInspector({
         >
           ⎇ Reveal
         </button>
+        {node.expanded && (
+          <button
+            type="button"
+            className="bloom-footer-btn bloom-footer-btn-collapse"
+            onClick={() => {
+              const el = cy?.getElementById(node.id);
+              if (el?.length) onCollapseNode?.(el);
+            }}
+          >
+            ⊟ Collapse
+          </button>
+        )}
         <button
           type="button"
           className="bloom-footer-btn"

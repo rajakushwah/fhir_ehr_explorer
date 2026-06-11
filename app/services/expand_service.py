@@ -10,6 +10,7 @@ from app.services.graph_connectivity import (
     build_shared_concept_patients,
 )
 from app.services.graph_labels import wrap_graph_node
+from app.services.patient_display import patient_graph_label
 
 CLINICAL_CATEGORIES = (
     ("conditions", "HAS_CONDITION", "Conditions", "#38bdf8"),
@@ -128,7 +129,7 @@ def build_patients(
             MATCH (concept)<-[:CODED_AS]-(c:Condition)<-[:HAS_CONDITION]-(p:Patient)
             WHERE ($gender IS NULL OR p.gender = $gender)
               AND ($state IS NULL OR p.state = $state)
-            RETURN DISTINCT p.fhirId AS fhirId, p.gender AS gender, p.state AS state
+            RETURN DISTINCT p.fhirId AS fhirId, p.name AS name, p.gender AS gender, p.state AS state
             ORDER BY p.fhirId
             LIMIT $limit
             """,
@@ -141,7 +142,7 @@ def build_patients(
         return [wrap_graph_node({
                 "id": f"ui:patient|{r['fhirId']}",
                 "type": "Patient",
-                "label": f"Patient ({r.get('gender') or '?'}, {r.get('state') or '?'})",
+                "label": patient_graph_label(dict(r)),
                 "expandable": True,
                 "context": {"patientFhirId": r["fhirId"]},
             }) for r in res]

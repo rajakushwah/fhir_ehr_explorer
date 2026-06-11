@@ -88,6 +88,73 @@ function clearDirectChildren(node) {
   node.removeClass("expanded");
 }
 
+/** Collapse an expanded node, removing exclusive descendants and unlinking shared ones. */
+function collapseNode(node) {
+  if (!node || node.empty() || !node.data("expanded")) {
+    return { removedNodes: 0, removedEdges: 0 };
+  }
+
+  const cy = node.cy();
+  const nodesToRemove = new Set();
+  const edgesToRemove = [];
+
+  function visitChild(parent, child) {
+    if (!child || child.empty() || child.removed()) return;
+
+    const parentEdges = parent.edgesWith(child).filter((edge) => edge.source().same(parent));
+    const incomers = child.incomers("node");
+
+    if (incomers.length > 1) {
+      parentEdges.forEach((edge) => edgesToRemove.push(edge));
+      return;
+    }
+
+    if (nodesToRemove.has(child.id())) return;
+
+    child.outgoers().nodes().forEach((grandchild) => {
+      if (!grandchild.same(child)) visitChild(child, grandchild);
+    });
+
+    nodesToRemove.add(child.id());
+  }
+
+  node.outgoers().nodes().forEach((child) => visitChild(node, child));
+
+  let removedNodes = 0;
+  let removedEdges = 0;
+
+  cy.batch(() => {
+    edgesToRemove.forEach((edge) => {
+      if (edge && !edge.removed()) {
+        edge.remove();
+        removedEdges += 1;
+      }
+    });
+    nodesToRemove.forEach((id) => {
+      const el = cy.getElementById(id);
+      if (el.length && !el.removed()) {
+        el.remove();
+        removedNodes += 1;
+      }
+    });
+    node.data("expanded", false);
+    node.removeClass("expanded");
+  });
+
+  return { removedNodes, removedEdges };
+}
+
+function nodeSelectionPayload(node) {
+  if (!node || node.empty()) return null;
+  const data = node.data();
+  const expandable = data.expandable === true || data.expandable === "true";
+  return {
+    ...data,
+    expandable: expandable && !data.expanded,
+    expanded: !!data.expanded,
+  };
+}
+
 export default function GraphCanvas({
   rootNode,
   onNodeSelect,
@@ -95,6 +162,7 @@ export default function GraphCanvas({
   onLoadingChange,
   fitTrigger,
   expandAllTrigger = 0,
+  expandAllCancelTrigger = 0,
   collapseAllTrigger = 0,
   relayoutTrigger = 0,
   layoutMode = "fcose",
@@ -102,12 +170,15 @@ export default function GraphCanvas({
   visible = true,
   onCyReady,
   onExpandNotice,
+  onExpandAllActivityChange,
   onZoomChange,
   theme = "dark",
 }) {
   const containerRef = useRef(null);
   const cyRef = useRef(null);
   const expandingRef = useRef(new Set());
+  const expandAllCancelledRef = useRef(false);
+  const expandAllActiveRef = useRef(false);
   const hoveredNodeRef = useRef(null);
   const [tooltip, setTooltip] = useState(null);
 
@@ -118,8 +189,10 @@ export default function GraphCanvas({
   const expandLimitRef = useRef(expandLimit);
   const layoutModeRef = useRef(layoutMode);
   const onExpandNoticeRef = useRef(onExpandNotice);
+  const onExpandAllActivityChangeRef = useRef(onExpandAllActivityChange);
   const onZoomChangeRef = useRef(onZoomChange);
   onExpandNoticeRef.current = onExpandNotice;
+  onExpandAllActivityChangeRef.current = onExpandAllActivityChange;
   onZoomChangeRef.current = onZoomChange;
   layoutModeRef.current = layoutMode;
   onNodeSelectRef.current = onNodeSelect;
@@ -147,12 +220,41 @@ export default function GraphCanvas({
       label: data.fullLabel || data.label,
       meta: data.meta,
       expandable: data.expandable && !data.expanded,
+      expanded: !!data.expanded,
     });
   }, []);
 
   const handleExpandRef = useRef(null);
+
+  const isExpandAllCancelled = () =>
+    expandAllActiveRef.current && expandAllCancelledRef.current;
+
+  const clearExpandLoadingState = (cy) => {
+    if (!cy || cy.destroyed()) return;
+    cy.nodes(".loading").removeClass("loading");
+    expandingRef.current.clear();
+  };
+
+  const handleCollapseRef = useRef(null);
+
+  handleCollapseRef.current = (node) => {
+    const cy = cyRef.current;
+    if (!cy || cy.destroyed() || !node || node.empty()) return null;
+    if (!node.data("expanded")) return null;
+
+    const result = collapseNode(node);
+    highlightNeighborhood(cy, node, { dimOthers: true });
+    reportStats(cy);
+    deferFit(cy, 80);
+
+    const payload = nodeSelectionPayload(node);
+    onNodeSelectRef.current?.(payload);
+    return { ...result, node: payload };
+  };
+
   handleExpandRef.current = async (node) => {
     const cy = cyRef.current;
+    if (isExpandAllCancelled()) return;
     const isExpandable = node.data("expandable") === true || node.data("expandable") === "true";
     const patientChildren = getPatientChildren(node);
     const needsPatientRefresh =
@@ -179,6 +281,10 @@ export default function GraphCanvas({
       }
       const limit = expandLimitRef.current;
       const result = await expandNode(node.data("type"), nodeContext, limit);
+      if (isExpandAllCancelled()) {
+        node.removeClass("loading");
+        return;
+      }
       const children = result.nodes ?? [];
 
       if (import.meta.env.DEV) {
@@ -251,15 +357,18 @@ export default function GraphCanvas({
       });
 
       await runExpandLayout(cy, node, children.length);
+      if (isExpandAllCancelled()) return;
 
       highlightNeighborhood(cy, node, { dimOthers: true });
       await focusExpandedNeighborhood(cy, node, { zoomFactor: 2 });
+      if (isExpandAllCancelled()) return;
       onZoomChangeRef.current?.(cy.zoom());
 
+      onNodeSelectRef.current?.(nodeSelectionPayload(node));
       reportStats(cy);
 
       // Auto-continue when a filter hub has only one branch (e.g. all-female cohort).
-      if (children.length === 1) {
+      if (children.length === 1 && !isExpandAllCancelled()) {
         const childPayload = children[0].data ?? children[0];
         const parentType = node.data("type");
         const autoTypes = new Set(["PatientGroup", "Gender", "Region"]);
@@ -278,7 +387,9 @@ export default function GraphCanvas({
       if (import.meta.env.DEV) console.error("[Graph] expand failed", err);
     } finally {
       expandingRef.current.delete(node.id());
-      onLoadingChangeRef.current?.(false);
+      if (!expandAllActiveRef.current) {
+        onLoadingChangeRef.current?.(false);
+      }
     }
   };
 
@@ -429,6 +540,7 @@ export default function GraphCanvas({
     onCyReadyRef.current?.({
       cy,
       expandNode: (node) => handleExpandRef.current?.(node),
+      collapseNode: (node) => handleCollapseRef.current?.(node),
       focusNode: (node) => {
         if (!node || node.empty()) return;
         cy.elements().removeClass("dimmed highlighted");
@@ -447,13 +559,21 @@ export default function GraphCanvas({
 
     cy.on("tap", "node", (evt) => {
       const node = evt.target;
-      onNodeSelectRef.current?.(node.data());
+      onNodeSelectRef.current?.(nodeSelectionPayload(node));
       highlightNeighborhood(cy, node, { dimOthers: true });
       reportStats(cy);
     });
 
     cy.on("dbltap", "node", (evt) => {
       handleExpandRef.current?.(evt.target);
+    });
+
+    cy.on("cxttap", "node", (evt) => {
+      evt.originalEvent?.preventDefault();
+      const node = evt.target;
+      if (node.data("expanded")) {
+        handleCollapseRef.current?.(node);
+      }
     });
 
     cy.on("tap", (evt) => {
@@ -492,7 +612,11 @@ export default function GraphCanvas({
     });
     resizeObserver.observe(containerRef.current);
 
+    const preventContextMenu = (event) => event.preventDefault();
+    containerRef.current.addEventListener("contextmenu", preventContextMenu);
+
     return () => {
+      containerRef.current?.removeEventListener("contextmenu", preventContextMenu);
       resizeObserver.disconnect();
       cy.destroy();
       cyRef.current = null;
@@ -525,11 +649,23 @@ export default function GraphCanvas({
   }, [visible]);
 
   useEffect(() => {
+    if (expandAllCancelTrigger === 0) return;
+    expandAllCancelledRef.current = true;
+    const cy = cyRef.current;
+    clearExpandLoadingState(cy);
+    onLoadingChangeRef.current?.(false);
+  }, [expandAllCancelTrigger]);
+
+  useEffect(() => {
     if (expandAllTrigger === 0) return;
     const cy = cyRef.current;
     if (!cy || cy.destroyed()) return;
 
     let cancelled = false;
+    expandAllCancelledRef.current = false;
+    expandAllActiveRef.current = true;
+    onExpandAllActivityChangeRef.current?.(true);
+
     (async () => {
       onLoadingChangeRef.current?.(true);
       try {
@@ -537,17 +673,24 @@ export default function GraphCanvas({
           .nodes()
           .filter((n) => n.data("expandable") && !n.data("expanded"));
         for (const node of expandable) {
-          if (cancelled) break;
+          if (cancelled || expandAllCancelledRef.current) break;
           await handleExpandRef.current?.(node);
+        }
+        if (expandAllCancelledRef.current) {
+          onExpandNoticeRef.current?.("Expand all cancelled.");
         }
         reportStats(cy);
       } finally {
-        if (!cancelled) onLoadingChangeRef.current?.(false);
+        expandAllActiveRef.current = false;
+        onExpandAllActivityChangeRef.current?.(false);
+        clearExpandLoadingState(cy);
+        onLoadingChangeRef.current?.(false);
       }
     })();
 
     return () => {
       cancelled = true;
+      expandAllCancelledRef.current = true;
     };
   }, [expandAllTrigger, reportStats]);
 
@@ -607,7 +750,7 @@ export default function GraphCanvas({
   return (
     <div className="graph-canvas-wrap">
       <div className="graph-hint-bar">
-        <span>Click to select · Double-click or Expand to drill down · Explore node for details</span>
+        <span>Click to select · Double-click or Expand to drill down · Right-click expanded node to collapse · Explore node for details</span>
       </div>
       <div ref={containerRef} className="graph-canvas" />
       {tooltip && (
@@ -619,6 +762,9 @@ export default function GraphCanvas({
           <p className="tooltip-label">{tooltip.label}</p>
           {tooltip.expandable && (
             <span className="tooltip-action">Double-click to expand</span>
+          )}
+          {tooltip.expanded && (
+            <span className="tooltip-action">Right-click to collapse</span>
           )}
         </div>
       )}

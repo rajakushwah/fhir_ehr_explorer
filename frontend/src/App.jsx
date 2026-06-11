@@ -34,6 +34,8 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [fitTrigger, setFitTrigger] = useState(0);
   const [expandAllTrigger, setExpandAllTrigger] = useState(0);
+  const [expandAllCancelTrigger, setExpandAllCancelTrigger] = useState(0);
+  const [expandAllActive, setExpandAllActive] = useState(false);
   const [collapseAllTrigger, setCollapseAllTrigger] = useState(0);
   const [relayoutTrigger, setRelayoutTrigger] = useState(0);
   const [healthStatus, setHealthStatus] = useState({
@@ -124,11 +126,22 @@ export default function App() {
     }
   }, []);
 
+  const handleCancelExpandAll = useCallback(() => {
+    setExpandAllCancelTrigger((n) => n + 1);
+  }, []);
+
   const handleExpandSelected = useCallback(() => {
     if (!selectedNode?.id) return;
     const cy = graphApiRef.current?.cy ?? cyRef.current;
     const el = cy?.getElementById(selectedNode.id);
     if (el?.length) graphApiRef.current?.expandNode?.(el);
+  }, [selectedNode]);
+
+  const handleCollapseSelected = useCallback(() => {
+    if (!selectedNode?.id) return;
+    const cy = graphApiRef.current?.cy ?? cyRef.current;
+    const el = cy?.getElementById(selectedNode.id);
+    if (el?.length) graphApiRef.current?.collapseNode?.(el);
   }, [selectedNode]);
 
   const handleDismissNode = useCallback((node) => {
@@ -329,12 +342,17 @@ export default function App() {
                 rootNode={rootNode}
                 onNodeSelect={(node) => {
                   setSelectedNode(node);
-                  if (!node) setInspectorNode(null);
+                  if (!node) {
+                    setInspectorNode(null);
+                  } else {
+                    setInspectorNode((prev) => (prev?.id === node.id ? { ...prev, ...node } : prev));
+                  }
                 }}
                 onStatsChange={setStats}
                 onLoadingChange={setLoading}
                 fitTrigger={fitTrigger}
                 expandAllTrigger={expandAllTrigger}
+                expandAllCancelTrigger={expandAllCancelTrigger}
                 collapseAllTrigger={collapseAllTrigger}
                 relayoutTrigger={relayoutTrigger}
                 layoutMode={graphLayout}
@@ -343,6 +361,7 @@ export default function App() {
                 theme={theme}
                 onCyReady={handleCyReady}
                 onZoomChange={setZoomLevel}
+                onExpandAllActivityChange={setExpandAllActive}
                 onExpandNotice={(message) => {
                   setGraphNotice(message);
                   window.setTimeout(() => setGraphNotice(null), 8000);
@@ -354,9 +373,12 @@ export default function App() {
                 onToggleStats={() => setStatsOpen((o) => !o)}
                 onRelayout={() => setRelayoutTrigger((n) => n + 1)}
                 onExpandAll={() => setExpandAllTrigger((n) => n + 1)}
+                onCancelExpandAll={handleCancelExpandAll}
+                expandAllActive={expandAllActive}
                 onCollapseAll={() => setCollapseAllTrigger((n) => n + 1)}
                 onClear={handleClearGraph}
-                disabled={!rootNode || loading}
+                disabled={!rootNode}
+                expandDisabled={!rootNode || (loading && !expandAllActive)}
               />
 
               {statsOpen && (
@@ -366,10 +388,12 @@ export default function App() {
                     loading={loading}
                     hasGraph={!!rootNode}
                     minimized={false}
+                    expandAllActive={expandAllActive}
                     expandLimit={patientExpandLimit}
                     onExpandLimitChange={setPatientExpandLimit}
                     onToggleMinimize={() => setStatsOpen(false)}
                     onExpandAll={() => setExpandAllTrigger((n) => n + 1)}
+                    onCancelExpandAll={handleCancelExpandAll}
                     onCollapseAll={() => setCollapseAllTrigger((n) => n + 1)}
                     onRelayout={() => setRelayoutTrigger((n) => n + 1)}
                     onFit={() => setFitTrigger((n) => n + 1)}
@@ -384,6 +408,7 @@ export default function App() {
                 selectedNode={selectedNode}
                 loading={loading}
                 onExpand={handleExpandSelected}
+                onCollapse={handleCollapseSelected}
                 onExplore={() => {
                   if (selectedNode) setInspectorNode(selectedNode);
                 }}
@@ -400,6 +425,19 @@ export default function App() {
                 onFit={() => setFitTrigger((n) => n + 1)}
                 zoomLevel={zoomLevel}
               />
+
+              {expandAllActive && (
+                <div className="graph-expand-all-banner" role="status">
+                  <span className="graph-expand-all-text">Expanding all nodes…</span>
+                  <button
+                    type="button"
+                    className="graph-expand-all-cancel"
+                    onClick={handleCancelExpandAll}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
 
               {graphNotice && (
                 <div className="graph-expand-notice" role="status">
@@ -434,6 +472,7 @@ export default function App() {
                   onFocusNode={handleFocusNode}
                   onRevealNode={handleRevealNode}
                   onDismissNode={handleDismissNode}
+                  onCollapseNode={handleCollapseSelected}
                 />
               )}
             </div>

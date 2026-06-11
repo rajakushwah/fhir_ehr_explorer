@@ -7,6 +7,7 @@ from typing import Any, Optional
 
 from app.db.neo4j import get_session
 from app.services.graph_labels import wrap_graph_node
+from app.services.patient_display import patient_graph_label
 from app.utils.expand_limits import resolve_expand_limit
 
 RESOURCE_RELS = {
@@ -103,7 +104,7 @@ def build_place_patients(context: dict[str, Any]) -> list[dict]:
               AND ($state IS NULL OR p.state IS NULL OR toLower(p.state) = toLower($state))
               AND ($country IS NULL OR p.country IS NULL OR toLower(p.country) = toLower($country))
               AND ($exclude IS NULL OR p.fhirId <> $exclude)
-            RETURN DISTINCT p.fhirId AS fhirId, p.gender AS gender, p.state AS state, p.city AS city
+            RETURN DISTINCT p.fhirId AS fhirId, p.name AS name, p.gender AS gender, p.state AS state, p.city AS city
             ORDER BY p.fhirId
             LIMIT $limit
             """,
@@ -117,7 +118,7 @@ def build_place_patients(context: dict[str, Any]) -> list[dict]:
     return [wrap_graph_node({
         "id": f"ui:patient|{r['fhirId']}",
         "type": "Patient",
-        "label": f"Patient ({r.get('gender') or '?'}, {r.get('city') or '?'})",
+        "label": patient_graph_label(dict(r)),
         "expandable": True,
         "context": {"patientFhirId": r["fhirId"]},
         "meta": {"shared": True},
@@ -203,7 +204,7 @@ def build_shared_concept_patients(context: dict[str, Any]) -> list[dict]:
             MATCH (concept:Concept {{system: $system, code: $code}})
             MATCH (concept)<-[:CODED_AS]-(:{label})<-[:{rel}]-(p:Patient)
             WHERE ($exclude IS NULL OR p.fhirId <> $exclude)
-            RETURN DISTINCT p.fhirId AS fhirId, p.gender AS gender, p.city AS city, p.state AS state
+            RETURN DISTINCT p.fhirId AS fhirId, p.name AS name, p.gender AS gender, p.city AS city, p.state AS state
             ORDER BY p.fhirId
             LIMIT $limit
             """,
@@ -216,7 +217,7 @@ def build_shared_concept_patients(context: dict[str, Any]) -> list[dict]:
     return [wrap_graph_node({
         "id": f"ui:patient|{r['fhirId']}",
         "type": "Patient",
-        "label": f"Patient ({r.get('gender') or '?'}, {r.get('city') or r.get('state') or '?'})",
+        "label": patient_graph_label(dict(r)),
         "expandable": True,
         "context": {"patientFhirId": r["fhirId"]},
         "meta": {"shared": True, "viaConcept": True},

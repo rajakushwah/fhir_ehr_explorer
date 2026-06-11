@@ -91,3 +91,31 @@ def period_bounds(period: Optional[dict]) -> tuple[Optional[str], Optional[str]]
     if not period:
         return None, None
     return period.get("start"), period.get("end")
+
+
+def official_patient_name(names: Optional[list]) -> Optional[str]:
+    """Build display name from FHIR Patient.name using the official HumanName entry."""
+    if not names:
+        return None
+
+    official = next((entry for entry in names if entry.get("use") == "official"), None)
+    entry = official or names[0]
+
+    text = entry.get("text")
+    if text and str(text).strip():
+        return str(text).strip()[:200]
+
+    parts: list[str] = []
+    for prefix in entry.get("prefix") or []:
+        if prefix:
+            parts.append(str(prefix).strip())
+    for given in entry.get("given") or []:
+        if given:
+            parts.append(str(given).strip())
+    family = entry.get("family")
+    if family:
+        parts.append(str(family).strip())
+
+    if not parts:
+        return None
+    return " ".join(parts)[:200]

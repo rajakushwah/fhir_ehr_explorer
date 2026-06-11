@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from app.db.neo4j import get_session
+from app.services.patient_display import order_patient_properties, patient_graph_label
 
 SKIP_KEYS = {"elementId", "id", "identity"}
 
@@ -107,6 +108,8 @@ def get_node_detail(node_type: str, context: dict[str, Any], meta: Optional[dict
             }
 
         props = _clean_props(dict(row["props"]))
+        if node_type == "Patient":
+            props = order_patient_properties(props)
         element_key = list(match_props.values())[0]
         neighbor_summary = _neighbor_type_summary(session, label, match_props)
         rel_summary = _relationship_summary(session, label, match_props)
@@ -234,9 +237,7 @@ def get_node_neighbors(
 
 def _neighbor_label(node_type: str, props: dict) -> str:
     if node_type == "Patient":
-        g = props.get("gender") or "?"
-        loc = props.get("city") or props.get("state") or "?"
-        return f"Patient ({g}, {loc})"
+        return patient_graph_label(props)
     if node_type == "Concept":
         return props.get("display") or props.get("text") or props.get("code") or "Concept"
     if node_type == "Place":

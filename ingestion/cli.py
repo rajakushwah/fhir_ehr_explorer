@@ -201,6 +201,63 @@ def backfill_places(
     typer.echo(f"Created/updated {places:,} shared Place nodes with LIVES_IN links.")
 
 
+@app.command("backfill-patient-names")
+def backfill_patient_names(
+    input_dir: Path = typer.Argument(..., help="Directory of Synthea FHIR JSON bundles"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+):
+    """Set Patient.name from FHIR official HumanName in bundle files."""
+    from ingestion.fhir_utils import official_patient_name
+    from ingestion.parsers.bundle_parser import BundleIndex, iter_bundle_files, load_bundle
+
+    resolved = input_dir.resolve()
+    if not resolved.is_dir():
+        raise typer.BadParameter(f"Not a directory: {resolved}")
+
+    if not yes and not typer.confirm(
+        f"Update Patient.name from official FHIR names in {resolved}?"
+    ):
+        raise typer.Abort()
+
+    updates: list[dict[str, str]] = []
+    skipped = 0
+    for path in iter_bundle_files(resolved):
+        bundle = load_bundle(path)
+        index = BundleIndex(bundle)
+        patients = index.by_type.get("Patient") or []
+        if not patients:
+            skipped += 1
+            continue
+        patient = patients[0]
+        name = official_patient_name(patient.get("name"))
+        pid = patient.get("id")
+        if not pid or not name:
+            skipped += 1
+            continue
+        updates.append({"fhirId": pid, "name": name})
+
+    if not updates:
+        typer.echo("No patient names found to backfill.")
+        raise typer.Exit(0)
+
+    with get_session() as session:
+        row = session.run(
+            """
+            UNWIND $rows AS row
+            MATCH (p:Patient {fhirId: row.fhirId})
+            SET p.name = row.name
+            RETURN count(p) AS updated
+            """,
+            rows=updates,
+        ).single()
+        updated = int(row["updated"]) if row else 0
+
+    typer.echo(
+        f"Updated {updated:,} patients with names from {len(updates):,} bundles "
+        f"({skipped:,} bundles skipped)."
+    )
+
+
 @app.command("load-bulk")
 def load_bulk(
     input_dir: Path = typer.Argument(..., help="Directory of Synthea patient Bundle JSON files"),

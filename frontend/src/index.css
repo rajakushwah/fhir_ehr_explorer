@@ -1121,6 +1121,27 @@ select {
   color: #fff;
 }
 
+.bloom-collapse-btn {
+  padding: 4px 12px;
+  border: 1px solid #f59e0b;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bloom-collapse-btn:hover {
+  background: #f59e0b;
+  color: #fff;
+}
+
+.bloom-footer-btn-collapse {
+  color: #d97706;
+}
+
 .bloom-floating-controls {
   position: absolute;
   right: 16px;
@@ -1726,6 +1747,29 @@ select {
   color: var(--accent);
 }
 
+.graph-stats-loading-active {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.graph-stats-cancel-link {
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: inherit;
+  font-weight: 600;
+  color: var(--danger);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.graph-stats-cancel-link:hover {
+  opacity: 0.85;
+}
+
 .graph-stats-field {
   display: flex;
   flex-direction: column;
@@ -1798,6 +1842,17 @@ select {
 .graph-stats-btn-primary {
   background: var(--surface);
   font-weight: 500;
+}
+
+.graph-stats-btn-danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.graph-stats-btn-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: rgba(220, 38, 38, 0.08);
+  color: var(--danger);
 }
 
 .graph-stats-btn-icon {
@@ -1983,6 +2038,44 @@ select {
   text-align: center;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   pointer-events: none;
+}
+
+.graph-expand-all-banner {
+  position: absolute;
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px 10px 16px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
+  pointer-events: auto;
+}
+
+.graph-expand-all-text {
+  font-size: 0.875rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.graph-expand-all-cancel {
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--danger);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.graph-expand-all-cancel:hover {
+  background: rgba(220, 38, 38, 0.08);
 }
 
 .graph-details-float {

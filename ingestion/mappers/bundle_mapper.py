@@ -10,6 +10,7 @@ from ingestion.fhir_utils import (
     extension_value,
     first_coding,
     observation_value,
+    official_patient_name,
     period_bounds,
     ref_id,
     status_text,
@@ -124,6 +125,7 @@ def map_bundle(bundle: dict, options: MapOptions | None = None) -> GraphPayload:
             "Patient",
             pid,
             {
+                "name": official_patient_name(patient.get("name")),
                 "gender": patient.get("gender"),
                 "birthDate": patient.get("birthDate"),
                 "city": addr.get("city"),

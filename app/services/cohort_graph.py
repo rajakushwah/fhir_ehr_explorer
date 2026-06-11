@@ -9,6 +9,7 @@ from typing import Any, Optional
 from app.db.neo4j import get_session
 from app.services.graph_labels import wrap_graph_node
 from app.services.location_filters import patient_location_drill_where, patient_location_where
+from app.services.patient_display import patient_graph_label
 from app.utils.expand_limits import resolve_expand_limit
 
 RESOURCE_REL: dict[str, tuple[str, str]] = {
@@ -264,7 +265,7 @@ def build_cohort_patients(context: dict[str, Any]) -> list[dict]:
             + _where_clause()
             + _drill_where_clause()
             + """
-            RETURN DISTINCT p.fhirId AS fhirId, p.gender AS gender,
+            RETURN DISTINCT p.fhirId AS fhirId, p.name AS name, p.gender AS gender,
                    p.state AS state, p.city AS city
             ORDER BY p.fhirId
             LIMIT $limit
@@ -275,7 +276,7 @@ def build_cohort_patients(context: dict[str, Any]) -> list[dict]:
     return [wrap_graph_node({
         "id": f"ui:patient|{r['fhirId']}",
         "type": "Patient",
-        "label": f"Patient ({r.get('gender') or '?'}, {r.get('city') or r.get('state') or '?'})",
+        "label": patient_graph_label(dict(r)),
         "expandable": True,
         "context": {"patientFhirId": r["fhirId"]},
     }) for r in records]
