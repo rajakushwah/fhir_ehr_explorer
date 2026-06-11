@@ -79,11 +79,31 @@ export async function searchConcepts(query) {
   return request("/search", { query: query.trim() }, "search");
 }
 
-export async function expandNode(nodeType, context) {
+export async function expandNode(nodeType, context, limit) {
+  const body = { nodeType, context };
+  if (limit != null) {
+    body.limit = limit;
+  }
+  return request("/graph/expand", body, `expand/${nodeType}`);
+}
+
+export async function getNodeDetail(nodeType, context, meta) {
+  return request("/graph/node/detail", { nodeType, context, meta }, `node/detail/${nodeType}`);
+}
+
+export async function getNodeNeighbors(nodeType, context, filterType, limit = 50) {
   return request(
-    "/graph/expand",
-    { nodeType, context },
-    `expand/${nodeType}`
+    "/graph/node/neighbors",
+    { nodeType, context, filterType, limit },
+    `node/neighbors/${nodeType}`
+  );
+}
+
+export async function getNodeRelationships(nodeType, context, filterRel, limit = 50) {
+  return request(
+    "/graph/node/relationships",
+    { nodeType, context, filterRel, limit },
+    `node/relationships/${nodeType}`
   );
 }
 

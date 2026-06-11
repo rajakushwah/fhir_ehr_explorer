@@ -6,9 +6,11 @@ import {
   computeChildPositions,
   ensureShortLabel,
   registerFcose,
-  runBloomLayout,
+  runExpandLayout,
+  runLayout,
 } from "./layout";
 import { resolveEdgeRel } from "./edgeLabels";
+import { computeGraphStats } from "./graphStats";
 
 registerFcose(Cytoscape);
 
@@ -24,13 +26,15 @@ const CY_BASE_OPTIONS = {
   boxSelectionEnabled: false,
 };
 
-function highlightNeighborhood(cy, node) {
+function highlightNeighborhood(cy, node, { dimOthers = true } = {}) {
   cy.elements().removeClass("dimmed highlighted");
   cy.edges().removeClass("highlighted");
   if (!node || node.empty()) return;
 
   const hood = node.closedNeighborhood();
-  cy.elements().not(hood).addClass("dimmed");
+  if (dimOthers) {
+    cy.elements().not(hood).addClass("dimmed");
+  }
   hood.nodes().addClass("highlighted");
   hood.edges().addClass("highlighted");
 }
@@ -48,14 +52,57 @@ function deferFit(cy, padding = 80) {
   });
 }
 
+/** Fit expanded neighborhood, then zoom in so connected nodes are easier to read. */
+function focusExpandedNeighborhood(cy, node, { zoomFactor = 2, padding = 72 } = {}) {
+  if (!cy || cy.destroyed() || !node || node.empty()) return Promise.resolve();
+
+  const hood = node.closedNeighborhood();
+  if (hood.empty()) return Promise.resolve();
+
+  return new Promise((resolve) => {
+    cy.animate({
+      fit: { eles: hood, padding },
+      duration: 320,
+      easing: "ease-out-cubic",
+      complete: () => {
+        const targetZoom = Math.min(cy.maxZoom(), cy.zoom() * zoomFactor);
+        cy.animate({
+          zoom: targetZoom,
+          center: { eles: hood },
+          duration: 380,
+          easing: "ease-out-cubic",
+          complete: resolve,
+        });
+      },
+    });
+  });
+}
+
+function getPatientChildren(node) {
+  return node.outgoers().nodes().filter((child) => child.data("type") === "Patient");
+}
+
+function clearDirectChildren(node) {
+  node.outgoers().nodes().forEach((child) => child.remove());
+  node.data("expanded", false);
+  node.removeClass("expanded");
+}
+
 export default function GraphCanvas({
   rootNode,
   onNodeSelect,
   onStatsChange,
   onLoadingChange,
   fitTrigger,
+  expandAllTrigger = 0,
+  collapseAllTrigger = 0,
+  relayoutTrigger = 0,
+  layoutMode = "fcose",
+  expandLimit = 50,
   visible = true,
   onCyReady,
+  onExpandNotice,
+  onZoomChange,
   theme = "dark",
 }) {
   const containerRef = useRef(null);
@@ -68,10 +115,23 @@ export default function GraphCanvas({
   const onCyReadyRef = useRef(onCyReady);
   const onStatsChangeRef = useRef(onStatsChange);
   const onLoadingChangeRef = useRef(onLoadingChange);
+  const expandLimitRef = useRef(expandLimit);
+  const layoutModeRef = useRef(layoutMode);
+  const onExpandNoticeRef = useRef(onExpandNotice);
+  const onZoomChangeRef = useRef(onZoomChange);
+  onExpandNoticeRef.current = onExpandNotice;
+  onZoomChangeRef.current = onZoomChange;
+  layoutModeRef.current = layoutMode;
   onNodeSelectRef.current = onNodeSelect;
   onCyReadyRef.current = onCyReady;
   onStatsChangeRef.current = onStatsChange;
   onLoadingChangeRef.current = onLoadingChange;
+  expandLimitRef.current = expandLimit;
+
+  const reportStats = useCallback((cy) => {
+    if (!cy || cy.destroyed()) return;
+    onStatsChangeRef.current?.(computeGraphStats(cy));
+  }, []);
 
   const updateTooltipForNode = useCallback((node) => {
     if (!node || node.empty()) {
@@ -93,53 +153,95 @@ export default function GraphCanvas({
   const handleExpandRef = useRef(null);
   handleExpandRef.current = async (node) => {
     const cy = cyRef.current;
-    if (!cy || !node?.data("expandable") || node.data("expanded")) return;
+    const isExpandable = node.data("expandable") === true || node.data("expandable") === "true";
+    const patientChildren = getPatientChildren(node);
+    const needsPatientRefresh =
+      patientChildren.length > 0
+      && patientChildren.length < expandLimitRef.current;
+
+    if (node.data("expanded") && !needsPatientRefresh) return;
+    if (!isExpandable && !needsPatientRefresh) return;
     if (expandingRef.current.has(node.id())) return;
+
+    if (needsPatientRefresh) {
+      clearDirectChildren(node);
+    }
 
     expandingRef.current.add(node.id());
     node.addClass("loading");
     onLoadingChangeRef.current?.(true);
 
     try {
-      const result = await expandNode(node.data("type"), node.data("context"));
+      const nodeContext = { ...(node.data("context") ?? {}) };
+      const meta = node.data("meta");
+      if (meta && typeof meta === "object" && Object.keys(meta).length > 0) {
+        nodeContext.meta = meta;
+      }
+      const limit = expandLimitRef.current;
+      const result = await expandNode(node.data("type"), nodeContext, limit);
       const children = result.nodes ?? [];
+
+      if (import.meta.env.DEV) {
+        console.info(
+          "[Graph] expand",
+          node.data("type"),
+          `limit=${limit}`,
+          `received=${children.length}`
+        );
+      }
+
+      if (children.length === 0) {
+        node.removeClass("loading");
+        if (result.message) {
+          onExpandNoticeRef.current?.(result.message);
+        } else if (import.meta.env.DEV) {
+          console.warn("[Graph] expand returned no children", node.data("type"), nodeContext);
+        }
+        return;
+      }
 
       const parentPos = node.position();
       const positions = computeChildPositions(parentPos, children.length);
 
       cy.batch(() => {
         children.forEach((child, i) => {
-          if (cy.getElementById(child.data.id).length) return;
-
-          const data = ensureShortLabel(child.data);
-          const pos = positions[i] ?? { x: parentPos.x + 140, y: parentPos.y };
-          const classes = ["show-label"];
-          if (data.expandable) classes.push("expandable");
-          if (data.expanded) classes.push("expanded");
-
-          cy.add({
-            group: "nodes",
-            data,
-            position: pos,
-            classes: classes.join(" "),
-          });
-
+          const childId = child.data?.id ?? child.id;
+          const data = ensureShortLabel(child.data ?? child);
           const relType = resolveEdgeRel(
             node.data("type"),
             data.type,
             node.data("context"),
             data
           );
+          const edgeId = `${node.id()}->${childId}`;
 
-          cy.add({
-            group: "edges",
-            data: {
-              id: `${node.id()}->${child.data.id}`,
-              source: node.id(),
-              target: child.data.id,
-              relType,
-            },
-          });
+          if (!cy.getElementById(childId).length) {
+            const pos = positions[i] ?? { x: parentPos.x + 140, y: parentPos.y };
+            const classes = ["show-label"];
+            if (data.expandable) classes.push("expandable");
+            if (data.expanded) classes.push("expanded");
+
+            cy.add({
+              group: "nodes",
+              data,
+              position: pos,
+              classes: classes.join(" "),
+            });
+          } else {
+            cy.getElementById(childId).addClass("show-label");
+          }
+
+          if (!cy.getElementById(edgeId).length) {
+            cy.add({
+              group: "edges",
+              data: {
+                id: edgeId,
+                source: node.id(),
+                target: childId,
+                relType,
+              },
+            });
+          }
         });
 
         node.data("expanded", true);
@@ -148,20 +250,31 @@ export default function GraphCanvas({
         node.neighborhood().nodes().addClass("show-label");
       });
 
-      await runBloomLayout(cy, node);
+      await runExpandLayout(cy, node, children.length);
 
-      cy.animate({
-        fit: { eles: node.closedNeighborhood(), padding: 80 },
-        duration: 400,
-        easing: "ease-out-cubic",
-      });
+      highlightNeighborhood(cy, node, { dimOthers: true });
+      await focusExpandedNeighborhood(cy, node, { zoomFactor: 2 });
+      onZoomChangeRef.current?.(cy.zoom());
 
-      onStatsChangeRef.current?.({
-        nodes: cy.nodes().length,
-        edges: cy.edges().length,
-      });
+      reportStats(cy);
+
+      // Auto-continue when a filter hub has only one branch (e.g. all-female cohort).
+      if (children.length === 1) {
+        const childPayload = children[0].data ?? children[0];
+        const parentType = node.data("type");
+        const autoTypes = new Set(["PatientGroup", "Gender", "Region"]);
+        if (autoTypes.has(parentType) && childPayload.expandable) {
+          const childId = childPayload.id ?? childPayload.data?.id;
+          const childEl = cy.getElementById(childId);
+          if (childEl.length && !childEl.data("expanded")) {
+            await handleExpandRef.current?.(childEl);
+          }
+        }
+      }
     } catch (err) {
       node.removeClass("loading");
+      const message = err instanceof Error ? err.message : "Expand failed";
+      onExpandNoticeRef.current?.(message);
       if (import.meta.env.DEV) console.error("[Graph] expand failed", err);
     } finally {
       expandingRef.current.delete(node.id());
@@ -169,7 +282,56 @@ export default function GraphCanvas({
     }
   };
 
-  const loadRootNode = useCallback((cy, nodeSpec) => {
+  const addChildNodes = useCallback((cy, parentNode, children) => {
+    if (!children?.length) return;
+
+    const parentPos = parentNode.position();
+    const positions = computeChildPositions(parentPos, children.length);
+    const parentType = parentNode.data("type");
+    const parentContext = parentNode.data("context") ?? {};
+
+    cy.batch(() => {
+      children.forEach((child, i) => {
+        if (cy.getElementById(child.id).length) return;
+
+        const data = ensureShortLabel(child);
+        const pos = positions[i] ?? { x: parentPos.x + 140, y: parentPos.y };
+        const classes = ["show-label"];
+        if (data.expandable) classes.push("expandable");
+        if (data.expanded) classes.push("expanded");
+
+        cy.add({
+          group: "nodes",
+          data,
+          position: pos,
+          classes: classes.join(" "),
+        });
+
+        const relType = resolveEdgeRel(
+          parentType,
+          data.type,
+          parentContext,
+          data
+        );
+
+        cy.add({
+          group: "edges",
+          data: {
+            id: `${parentNode.id()}->${child.id}`,
+            source: parentNode.id(),
+            target: child.id,
+            relType,
+          },
+        });
+      });
+
+      parentNode.data("expanded", true);
+      parentNode.addClass("expanded show-label");
+      parentNode.neighborhood().nodes().addClass("show-label");
+    });
+  }, []);
+
+  const loadRootNode = useCallback(async (cy, nodeSpec) => {
     if (!cy || cy.destroyed() || !nodeSpec) return;
 
     cy.elements().remove();
@@ -184,6 +346,34 @@ export default function GraphCanvas({
         label: nodeSpec.label || "Patient",
         expandable: true,
         context: { patientFhirId: nodeSpec.patientFhirId },
+      });
+    } else if (nodeSpec.graphMode === "metric") {
+      const key = nodeSpec.context?.cohortKey ?? "metric";
+      const filters = nodeSpec.context?.filters ?? {};
+      data = ensureShortLabel({
+        id: `ui:metric|${nodeSpec.nodeType}|${key}`,
+        type: nodeSpec.nodeType,
+        label: nodeSpec.label,
+        expandable: true,
+        context: {
+          cohortFilters: filters,
+          cohortKey: key,
+          metricResource: nodeSpec.nodeType,
+        },
+      });
+    } else if (nodeSpec.graphMode === "cohort") {
+      const key = nodeSpec.context?.cohortKey ?? "cohort";
+      const initialChildren = nodeSpec.initialChildren ?? [];
+      data = ensureShortLabel({
+        id: `ui:PatientGroup|cohort|${key}`,
+        type: "PatientGroup",
+        label: nodeSpec.summaryLabel || nodeSpec.label,
+        expandable: initialChildren.length === 0,
+        expanded: initialChildren.length > 0,
+        context: {
+          cohortFilters: nodeSpec.context?.filters ?? {},
+          cohortKey: key,
+        },
       });
     } else {
       data = ensureShortLabel({
@@ -202,17 +392,30 @@ export default function GraphCanvas({
       group: "nodes",
       data,
       position: { x: 0, y: 0 },
-      classes: "expandable show-label",
+      classes: `${data.expandable ? "expandable " : ""}show-label`.trim(),
     });
 
     const node = cy.nodes()[0];
-    node.select();
-    onNodeSelectRef.current?.(node.data());
-    highlightNeighborhood(cy, node);
 
-    onStatsChangeRef.current?.({ nodes: 1, edges: 0 });
+    if (nodeSpec.graphMode === "cohort" && nodeSpec.initialChildren?.length) {
+      addChildNodes(cy, node, nodeSpec.initialChildren);
+      await runExpandLayout(cy, node, nodeSpec.initialChildren.length);
+    } else if (
+      (nodeSpec.graphMode === "cohort"
+        || nodeSpec.graphMode === "metric"
+        || nodeSpec.graphMode === "concept")
+      && nodeSpec.autoExpand !== false
+      && data.expandable
+    ) {
+      await handleExpandRef.current?.(node);
+    }
+
+    cy.nodes().addClass("show-label");
+    highlightNeighborhood(cy, node, { dimOthers: false });
+
+    reportStats(cy);
     deferFit(cy, 80);
-  }, []);
+  }, [addChildNodes, reportStats]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -223,15 +426,30 @@ export default function GraphCanvas({
       ...CY_BASE_OPTIONS,
     });
     cyRef.current = cy;
-    onCyReadyRef.current?.(cy);
+    onCyReadyRef.current?.({
+      cy,
+      expandNode: (node) => handleExpandRef.current?.(node),
+      focusNode: (node) => {
+        if (!node || node.empty()) return;
+        cy.elements().removeClass("dimmed highlighted");
+        highlightNeighborhood(cy, node, { dimOthers: true });
+        node.select();
+        onNodeSelectRef.current?.(node.data());
+        cy.animate({ center: { eles: node }, zoom: Math.min(cy.maxZoom(), Math.max(cy.zoom(), 1.1)) }, { duration: 300 });
+      },
+      dismissNode: (node) => {
+        if (!node || node.empty()) return;
+        node.remove();
+        onNodeSelectRef.current?.(null);
+        reportStats(cy);
+      },
+    });
 
     cy.on("tap", "node", (evt) => {
       const node = evt.target;
       onNodeSelectRef.current?.(node.data());
-      highlightNeighborhood(cy, node);
-      cy.nodes().removeClass("show-label");
-      node.addClass("show-label");
-      node.neighborhood().nodes().addClass("show-label");
+      highlightNeighborhood(cy, node, { dimOthers: true });
+      reportStats(cy);
     });
 
     cy.on("dbltap", "node", (evt) => {
@@ -244,25 +462,22 @@ export default function GraphCanvas({
         cy.edges().removeClass("highlighted");
         onNodeSelectRef.current?.(null);
         setTooltip(null);
+        reportStats(cy);
       }
     });
 
     cy.on("mouseover", "node", (evt) => {
-      const node = evt.target;
-      hoveredNodeRef.current = node;
-      node.addClass("show-label");
-      updateTooltipForNode(node);
+      hoveredNodeRef.current = evt.target;
+      updateTooltipForNode(evt.target);
     });
 
-    cy.on("mouseout", "node", (evt) => {
+    cy.on("mouseout", "node", () => {
       hoveredNodeRef.current = null;
-      if (!evt.target.selected()) {
-        evt.target.removeClass("show-label");
-      }
       setTooltip(null);
     });
 
     cy.on("pan zoom", () => {
+      onZoomChangeRef.current?.(cy.zoom());
       if (hoveredNodeRef.current) {
         updateTooltipForNode(hoveredNodeRef.current);
       }
@@ -282,7 +497,7 @@ export default function GraphCanvas({
       cy.destroy();
       cyRef.current = null;
     };
-  }, [updateTooltipForNode]);
+  }, [updateTooltipForNode, reportStats]);
 
   useEffect(() => {
     const cy = cyRef.current;
@@ -309,14 +524,90 @@ export default function GraphCanvas({
     deferFit(cy, 80);
   }, [visible]);
 
+  useEffect(() => {
+    if (expandAllTrigger === 0) return;
+    const cy = cyRef.current;
+    if (!cy || cy.destroyed()) return;
+
+    let cancelled = false;
+    (async () => {
+      onLoadingChangeRef.current?.(true);
+      try {
+        const expandable = cy
+          .nodes()
+          .filter((n) => n.data("expandable") && !n.data("expanded"));
+        for (const node of expandable) {
+          if (cancelled) break;
+          await handleExpandRef.current?.(node);
+        }
+        reportStats(cy);
+      } finally {
+        if (!cancelled) onLoadingChangeRef.current?.(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expandAllTrigger, reportStats]);
+
+  useEffect(() => {
+    if (collapseAllTrigger === 0) return;
+    const cy = cyRef.current;
+    if (!cy || cy.destroyed() || !rootNode) return;
+    loadRootNode(cy, rootNode);
+  }, [collapseAllTrigger, rootNode, loadRootNode]);
+
+  useEffect(() => {
+    if (relayoutTrigger === 0) return;
+    const cy = cyRef.current;
+    if (!cy || cy.destroyed() || cy.nodes().length < 2) return;
+
+    onLoadingChangeRef.current?.(true);
+    runLayout(cy, layoutModeRef.current, null)
+      .then(() => deferFit(cy, 80))
+      .finally(() => onLoadingChangeRef.current?.(false));
+  }, [relayoutTrigger, layoutMode]);
+
+  const prevExpandLimitRef = useRef(expandLimit);
+
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy || cy.destroyed()) return;
+    if (prevExpandLimitRef.current === expandLimit) return;
+    prevExpandLimitRef.current = expandLimit;
+
+    const candidates = cy.nodes().filter((node) => {
+      const patients = getPatientChildren(node);
+      return patients.length > 0 && patients.length < expandLimit;
+    });
+
+    if (candidates.length === 0) return;
+
+    let cancelled = false;
+    (async () => {
+      onLoadingChangeRef.current?.(true);
+      try {
+        for (const node of candidates) {
+          if (cancelled) break;
+          await handleExpandRef.current?.(node);
+        }
+        reportStats(cy);
+        deferFit(cy, 80);
+      } finally {
+        if (!cancelled) onLoadingChangeRef.current?.(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [expandLimit, reportStats]);
+
   return (
     <div className="graph-canvas-wrap">
       <div className="graph-hint-bar">
-        <span>Click to select</span>
-        <span className="hint-dot">·</span>
-        <span>Double-click to expand</span>
-        <span className="hint-dot">·</span>
-        <span>Scroll to zoom</span>
+        <span>Click to select · Double-click or Expand to drill down · Explore node for details</span>
       </div>
       <div ref={containerRef} className="graph-canvas" />
       {tooltip && (

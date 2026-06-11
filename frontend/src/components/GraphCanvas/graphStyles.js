@@ -1,45 +1,40 @@
-/** Cytoscape styles — light solid-color nodes, labels clipped inside. */
+/** Cytoscape styles — circular nodes, no borders. */
 
-import { NODE_LABEL_COLOR, NODE_TYPE_COLORS, nodeBorderColor } from "./nodeColors";
+import { NODE_DEFAULT_COLOR, NODE_LABEL_COLOR, NODE_TYPE_COLORS } from "./nodeColors";
 
 const THEMES = {
   dark: {
-    border: "rgba(32, 63, 104, 0.2)",
     edgeColor: "#334155",
     edgeLabelColor: "#94a3b8",
     arrowColor: "#475569",
-    expandableBorder: "rgba(32, 63, 104, 0.45)",
-    expandedBorder: "#475569",
-    loadingBg: "#cbd5e1",
+    loadingBg: "#E8ECF0",
     highlightEdge: "#5b8fd4",
-    selectBorder: "#d946a8",
+    selectOverlay: "#d946a8",
+    expandableOverlay: "rgba(32, 63, 104, 0.35)",
   },
   light: {
-    border: "rgba(32, 63, 104, 0.2)",
     edgeColor: "#94a3b8",
     edgeLabelColor: "#64748b",
     arrowColor: "#64748b",
-    expandableBorder: "rgba(32, 63, 104, 0.45)",
-    expandedBorder: "#94a3b8",
-    loadingBg: "#cbd5e1",
+    loadingBg: "#E8ECF0",
     highlightEdge: "#203f68",
-    selectBorder: "#d946a8",
+    selectOverlay: "#d946a8",
+    expandableOverlay: "rgba(32, 63, 104, 0.25)",
   },
 };
 
-function typedNode(type, size = {}, textStyle = {}, shape = "ellipse") {
-  const fill = NODE_TYPE_COLORS[type] ?? "#C7B8F5";
+function typedNode(type, diameter = 44, textStyle = {}) {
+  const fill = NODE_TYPE_COLORS[type] ?? NODE_DEFAULT_COLOR;
   return {
     selector: `node[type = '${type}']`,
     style: {
       "background-image": "none",
       "background-opacity": 1,
       "background-color": fill,
-      "border-color": nodeBorderColor(type),
-      shape,
-      width: 44,
-      height: 44,
-      ...size,
+      shape: "ellipse",
+      width: diameter,
+      height: diameter,
+      "border-width": 0,
       ...textStyle,
     },
   };
@@ -65,78 +60,76 @@ export function getCytoscapeStyles(theme = "dark") {
     {
       selector: "node",
       style: {
-        label: "",
+        ...labelInside,
         width: 44,
         height: 44,
         shape: "ellipse",
-        "background-color": "#C7B8F5",
+        "background-color": NODE_DEFAULT_COLOR,
         "background-image": "none",
         "background-opacity": 1,
-        "border-width": 1,
-        "border-color": t.border,
-        "border-opacity": 1,
-        "transition-property": "opacity, border-width, width, height",
+        "border-width": 0,
+        "font-size": 8,
+        "text-max-width": 40,
+        "overlay-opacity": 0,
+        "transition-property": "opacity, width, height, overlay-opacity",
         "transition-duration": 180,
       },
     },
-    typedNode("Concept", { width: 72, height: 72 }, { "font-size": 9, "text-max-width": 62 }),
+    typedNode("Concept", 72, { "font-size": 9, "text-max-width": 62 }),
+    typedNode("PatientGroup", 72, { "font-size": 9, "text-max-width": 64 }),
     typedNode(
-      "PatientGroup",
-      { width: 72, height: 48 },
-      { "font-size": 9, "text-max-width": 64 },
-      "round-rectangle"
+      "Gender",
+      58,
+      { "font-size": 8, "text-max-width": 52, "text-wrap": "wrap", "line-height": 1.1 }
     ),
-    typedNode("Gender", { width: 44, height: 44 }, { "font-size": 8, "text-max-width": 38 }),
-    typedNode("Region", { width: 44, height: 44 }, { "font-size": 8, "text-max-width": 38 }),
-    typedNode("Patient", { width: 56, height: 56 }, { "font-size": 9, "text-max-width": 48 }),
     typedNode(
-      "ClinicalCategory",
-      { width: 80, height: 48 },
-      { "font-size": 8, "text-max-width": 72 },
-      "round-rectangle"
+      "Region",
+      58,
+      { "font-size": 8, "text-max-width": 52, "text-wrap": "wrap", "line-height": 1.1 }
     ),
-    typedNode("Condition", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode("Observation", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode("AllergyIntolerance", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode(
-      "Encounter",
-      { width: 48, height: 48 },
-      { "font-size": 7, "text-max-width": 42 },
-      "round-rectangle"
-    ),
-    typedNode("Procedure", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode("MedicationRequest", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode("Immunization", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode("DiagnosticReport", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode("Organization", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode("Location", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
-    typedNode("Practitioner", { width: 44, height: 44 }, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("Patient", 56, { "font-size": 9, "text-max-width": 48 }),
+    typedNode("ClinicalCategory", 64, { "font-size": 8, "text-max-width": 56 }),
+    typedNode("Condition", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("Observation", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("AllergyIntolerance", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("Encounter", 48, { "font-size": 7, "text-max-width": 42 }),
+    typedNode("Procedure", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("MedicationRequest", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("Immunization", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("DiagnosticReport", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("Organization", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("Location", 44, { "font-size": 7, "text-max-width": 38 }),
+    typedNode("Practitioner", 44, { "font-size": 7, "text-max-width": 38 }),
     {
-      selector:
-        "node.show-label, node:selected, node[type = 'ClinicalCategory'], node[type = 'Patient'], node[type = 'Concept'], node[type = 'PatientGroup']",
-      style: labelInside,
+      selector: "node:selected",
+      style: {
+        "font-weight": 500,
+        "overlay-color": t.selectOverlay,
+        "overlay-opacity": 0.2,
+        "overlay-padding": 6,
+        "z-index": 999,
+      },
     },
     {
       selector: "node.expandable",
       style: {
-        "border-width": 1,
-        "border-color": t.expandableBorder,
-        "border-opacity": 1,
+        "overlay-color": t.expandableOverlay,
+        "overlay-opacity": 0.12,
+        "overlay-padding": 4,
       },
     },
     {
       selector: "node.expanded",
       style: {
-        "border-color": t.expandedBorder,
-        "border-opacity": 0.75,
+        "overlay-opacity": 0,
       },
     },
     {
       selector: "node.loading",
       style: {
         "background-color": t.loadingBg,
-        "border-color": t.expandableBorder,
         "background-image": "none",
+        "overlay-opacity": 0,
       },
     },
     {
@@ -172,15 +165,6 @@ export function getCytoscapeStyles(theme = "dark") {
         opacity: 0.95,
         "font-size": 8,
         "font-weight": 500,
-      },
-    },
-    {
-      selector: "node:selected",
-      style: {
-        "border-width": 1,
-        "border-color": t.selectBorder,
-        "background-opacity": 1,
-        "z-index": 999,
       },
     },
     {

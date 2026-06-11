@@ -34,6 +34,9 @@ FOR (o:Organization) REQUIRE o.fhirId IS UNIQUE;
 CREATE CONSTRAINT location_fhir_id IF NOT EXISTS
 FOR (l:Location) REQUIRE l.fhirId IS UNIQUE;
 
+CREATE CONSTRAINT place_key IF NOT EXISTS
+FOR (p:Place) REQUIRE p.key IS UNIQUE;
+
 CREATE CONSTRAINT practitioner_fhir_id IF NOT EXISTS
 FOR (p:Practitioner) REQUIRE p.fhirId IS UNIQUE;
 

@@ -128,6 +128,7 @@ def map_bundle(bundle: dict, options: MapOptions | None = None) -> GraphPayload:
                 "birthDate": patient.get("birthDate"),
                 "city": addr.get("city"),
                 "state": addr.get("state"),
+                "country": addr.get("country"),
                 "postalCode": addr.get("postalCode"),
                 "race": extension_value(patient.get("extension") or [], "us-core-race"),
                 "ethnicity": extension_value(patient.get("extension") or [], "us-core-ethnicity"),

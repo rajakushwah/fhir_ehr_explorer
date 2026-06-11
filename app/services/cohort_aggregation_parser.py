@@ -90,10 +90,9 @@ def build_aggregation_interpretation(
 
     if parsed.gender:
         parts.append(f"({parsed.gender})")
-    if parsed.state:
-        parts.append(f"in {parsed.state}")
-    elif parsed.city:
-        parts.append(f"in {parsed.city}")
+    location_parts = [p for p in (parsed.city, parsed.state, getattr(parsed, "country", None)) if p]
+    if location_parts:
+        parts.append(f"in {', '.join(location_parts)}")
     if parsed.condition:
         parts.append(f"with {parsed.condition}")
     if agg.group_by and agg.group_by != "patient":

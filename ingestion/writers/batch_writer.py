@@ -86,16 +86,58 @@ def _write_patient_links(tx, links: list[dict[str, str]]) -> None:
             )
 
 
-def _write_concept_links(tx, links: list[dict[str, str]]) -> None:
-    """MERGE concepts and CODED_AS in one pass (replaces separate concept node write)."""
-    if not links:
-        return
+def _dedupe_concept_links(links: list[dict[str, str]]) -> list[dict[str, str]]:
     unique: dict[tuple[str, str, str], dict[str, str]] = {}
     for link in links:
         key = (link["resourceFhirId"], link["system"], link["code"])
         unique[key] = link
+    return sorted(
+        unique.values(),
+        key=lambda row: (row["system"], row["code"], row["resourceFhirId"]),
+    )
 
-    rows = list(unique.values())
+
+def merge_concepts_tx(tx, concepts: list[dict[str, str]]) -> None:
+    """MERGE shared Concept nodes once (serial phase — avoids parallel deadlocks)."""
+    if not concepts:
+        return
+    sorted_rows = sorted(concepts, key=lambda row: (row["system"], row["code"]))
+    for batch in _chunks(sorted_rows, BATCH):
+        _run(
+            tx,
+            """
+            UNWIND $rows AS row
+            MERGE (c:Concept {system: row.system, code: row.code})
+            SET c.display = coalesce(row.display, c.display),
+                c.text = coalesce(row.display, c.text)
+            """,
+            rows=batch,
+        )
+
+
+def link_concept_relationships_tx(tx, links: list[dict[str, str]]) -> None:
+    """Link resources to pre-merged concepts (sorted for stable lock order)."""
+    if not links:
+        return
+    rows = _dedupe_concept_links(links)
+    for batch in _chunks(rows, BATCH):
+        _run(
+            tx,
+            """
+            UNWIND $rows AS row
+            MATCH (c:Concept {system: row.system, code: row.code})
+            MATCH (r {fhirId: row.resourceFhirId})
+            MERGE (r)-[:CODED_AS]->(c)
+            """,
+            rows=batch,
+        )
+
+
+def _write_concept_links(tx, links: list[dict[str, str]]) -> None:
+    """MERGE concepts and CODED_AS in one pass (single-writer / legacy path)."""
+    if not links:
+        return
+    rows = _dedupe_concept_links(links)
     for batch in _chunks(rows, BATCH):
         _run(
             tx,
@@ -160,27 +202,44 @@ def _write_location_links(tx, links: list[dict[str, str]]) -> None:
         )
 
 
-def write_payload_tx(tx, payload: GraphPayload) -> None:
+def write_payload_tx(tx, payload: GraphPayload, *, concepts_premerged: bool = False) -> None:
     """Write one patient payload inside an existing transaction."""
     for label in LABELS:
         _write_nodes(tx, label, payload.nodes.get(label, []))
 
     _write_patient_links(tx, payload.patient_links)
-    _write_concept_links(tx, payload.concept_links)
+    if concepts_premerged:
+        link_concept_relationships_tx(tx, payload.concept_links)
+    else:
+        _write_concept_links(tx, payload.concept_links)
     _write_encounter_links(tx, payload.encounter_links)
     _write_org_links(tx, payload.org_links)
     _write_location_links(tx, payload.location_links)
 
 
-def write_payloads_tx(tx, payloads: list[GraphPayload]) -> None:
+def write_payloads_tx(
+    tx,
+    payloads: list[GraphPayload],
+    *,
+    concepts_premerged: bool = False,
+) -> None:
     """Write multiple patient payloads in a single transaction."""
     for payload in payloads:
-        write_payload_tx(tx, payload)
+        write_payload_tx(tx, payload, concepts_premerged=concepts_premerged)
 
 
 def write_payload(session, payload: GraphPayload) -> None:
     session.execute_write(write_payload_tx, payload)
 
 
-def write_payloads_batch(session, payloads: list[GraphPayload]) -> None:
-    session.execute_write(write_payloads_tx, payloads)
+def write_payloads_batch(
+    session,
+    payloads: list[GraphPayload],
+    *,
+    concepts_premerged: bool = False,
+) -> None:
+    session.execute_write(write_payloads_tx, payloads, concepts_premerged=concepts_premerged)
+
+
+def merge_concepts_batch(session, concepts: list[dict[str, str]]) -> None:
+    session.execute_write(merge_concepts_tx, concepts)

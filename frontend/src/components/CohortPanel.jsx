@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { getCohortFilters } from "@/api/api";
 
 const EXAMPLE_QUERIES = [
+  "give me all the critical patients",
+  "patients in Boston, Massachusetts, US",
   "female patients with diabetes in Massachusetts",
+  "critical patients with high glucose",
   "count of total patients",
   "how many patients with diabetes",
   "count patients by gender",
@@ -11,10 +14,18 @@ const EXAMPLE_QUERIES = [
 
 export default function CohortPanel({ onSearch, onVisualize, searching, lastResult }) {
   const [query, setQuery] = useState("");
-  const [filters, setFilters] = useState({ states: [], genders: [], conditions: [] });
+  const [filters, setFilters] = useState({
+    states: [],
+    cities: [],
+    countries: [],
+    genders: [],
+    conditions: [],
+  });
   const [structured, setStructured] = useState({
     condition: "",
+    city: "",
     state: "",
+    country: "",
     gender: "",
   });
   const [mode, setMode] = useState("ask");
@@ -43,7 +54,9 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
   const handleFilters = () => {
     runSearch({
       condition: structured.condition || undefined,
+      city: structured.city || undefined,
       state: structured.state || undefined,
+      country: structured.country || undefined,
       gender: structured.gender || undefined,
     });
   };
@@ -84,7 +97,7 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder='e.g. "patients in Massachusetts with diabetes"'
+            placeholder='e.g. "give me all the critical patients" or "female patients with diabetes in MA"'
             rows={4}
           />
           <button
@@ -124,16 +137,43 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
             ))}
           </select>
 
+          <label className="field-label">City</label>
+          <select
+            value={structured.city}
+            onChange={(e) => setStructured((s) => ({ ...s, city: e.target.value }))}
+          >
+            <option value="">Any city</option>
+            {filters.cities?.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+
           <label className="field-label">State / Region</label>
           <select
             value={structured.state}
             onChange={(e) => setStructured((s) => ({ ...s, state: e.target.value }))}
           >
-            <option value="">Any location</option>
+            <option value="">Any state</option>
             {filters.states?.map((s) => (
               <option key={s} value={s}>{s}</option>
             ))}
           </select>
+
+          <label className="field-label">Country</label>
+          <select
+            value={structured.country}
+            onChange={(e) => setStructured((s) => ({ ...s, country: e.target.value }))}
+          >
+            <option value="">Any country</option>
+            {(filters.countries?.length ? filters.countries : ["US"]).map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+          {filters.countries?.length === 0 && (
+            <p className="field-hint">
+              Country not in database yet — run: python -m ingestion.cli backfill-country --yes
+            </p>
+          )}
 
           <label className="field-label">Gender</label>
           <select
@@ -186,7 +226,9 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
               </>
             )}
           </p>
-          {lastResult.concept && lastResult.queryType !== "aggregation" && (
+          {(lastResult.queryType === "aggregation"
+            ? lastResult.aggregation?.rows?.length > 0
+            : (lastResult.totalMatched ?? lastResult.total) > 0) && (
             <button
               type="button"
               className="btn-secondary"

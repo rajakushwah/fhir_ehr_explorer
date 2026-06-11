@@ -1,7 +1,14 @@
 from typing import Optional
 
-from app.config import MAX_PATIENT_RESULTS
 from app.db.neo4j import get_session
+from app.utils.expand_limits import MAX_GRAPH_EXPAND_LIMIT, resolve_expand_limit
+from app.services.graph_connectivity import (
+    RESOURCE_LABELS,
+    build_patient_concept_hubs,
+    build_patient_location_hub,
+    build_place_patients,
+    build_shared_concept_patients,
+)
 from app.services.graph_labels import wrap_graph_node
 
 CLINICAL_CATEGORIES = (
@@ -17,12 +24,17 @@ def _concept_key(system: str, code: str) -> str:
     return f"{system}|{code}"
 
 
-def build_patient_group_from_concept(system: str, code: str):
+def build_patient_group_from_concept(
+    system: str,
+    code: str,
+    rel: str = "HAS_CONDITION",
+):
+    label = RESOURCE_LABELS.get(rel, "Condition")
     with get_session() as session:
         res = session.run(
-            """
-            MATCH (concept:Concept {system: $system, code: $code})
-            MATCH (concept)<-[:CODED_AS]-(c:Condition)<-[:HAS_CONDITION]-(p:Patient)
+            f"""
+            MATCH (concept:Concept {{system: $system, code: $code}})
+            MATCH (concept)<-[:CODED_AS]-(:{label})<-[:{rel}]-(p:Patient)
             WITH DISTINCT p
             RETURN count(p) AS patientCount
             """,
@@ -39,7 +51,11 @@ def build_patient_group_from_concept(system: str, code: str):
                 "type": "PatientGroup",
                 "label": f"Patients ({row['patientCount']})",
                 "expandable": True,
-                "context": {"conceptSystem": system, "conceptCode": code},
+                "context": {
+                    "conceptSystem": system,
+                    "conceptCode": code,
+                    "resourceRel": rel,
+                },
             })]
 
 def build_gender_filters(system: str, code: str):
@@ -97,7 +113,14 @@ def build_region_filters(system: str, code: str, gender: Optional[str]):
                 },
             }) for r in res]
 
-def build_patients(system: str, code: str, gender: Optional[str], state: Optional[str]):
+def build_patients(
+    system: str,
+    code: str,
+    gender: Optional[str],
+    state: Optional[str],
+    context: Optional[dict] = None,
+):
+    limit = resolve_expand_limit(context or {})
     with get_session() as session:
         res = session.run(
             """
@@ -106,13 +129,14 @@ def build_patients(system: str, code: str, gender: Optional[str], state: Optiona
             WHERE ($gender IS NULL OR p.gender = $gender)
               AND ($state IS NULL OR p.state = $state)
             RETURN DISTINCT p.fhirId AS fhirId, p.gender AS gender, p.state AS state
+            ORDER BY p.fhirId
             LIMIT $limit
             """,
             system=system,
             code=code,
             gender=gender,
             state=state,
-            limit=MAX_PATIENT_RESULTS,
+            limit=limit,
         )
         return [wrap_graph_node({
                 "id": f"ui:patient|{r['fhirId']}",
@@ -160,7 +184,32 @@ def build_patient_conditions(patient_fhir_id: str):
         return nodes
 
 
-def build_patient_observations(patient_fhir_id: str, limit: int = GRAPH_LEAF_LIMIT):
+def _observation_expand_limit(patient_fhir_id: str, context: dict | None = None) -> int:
+    meta_total = ((context or {}).get("meta") or {}).get("total")
+    if meta_total is not None:
+        return max(1, min(int(meta_total), MAX_GRAPH_EXPAND_LIMIT))
+
+    with get_session() as session:
+        row = session.run(
+            """
+            MATCH (p:Patient {fhirId: $pid})-[:HAS_OBSERVATION]->(o:Observation)
+            RETURN count(o) AS c
+            """,
+            pid=patient_fhir_id,
+        ).single()
+        total = int(row["c"]) if row and row["c"] else 0
+        return max(1, min(total, MAX_GRAPH_EXPAND_LIMIT))
+
+
+def build_patient_observations(
+    patient_fhir_id: str,
+    limit: int | None = None,
+    *,
+    context: dict | None = None,
+):
+    if limit is None:
+        limit = _observation_expand_limit(patient_fhir_id, context)
+
     with get_session() as session:
         res = session.run(
             """
@@ -180,21 +229,20 @@ def build_patient_observations(patient_fhir_id: str, limit: int = GRAPH_LEAF_LIM
         )
         nodes = []
         for r in res:
-            if not r.get("conceptSystem"):
-                continue
             value = r.get("value") or ""
-            display = r["label"]
+            display = r["label"] or "Observation"
             if value:
                 display = f"{display}: {value[:20]}" if len(value) > 20 else f"{display}: {value}"
+            has_concept = bool(r.get("conceptSystem") and r.get("conceptCode"))
             nodes.append(wrap_graph_node({
                 "id": f"ui:Observation|{r['fhirId']}",
                 "type": "Observation",
                 "label": display,
-                "expandable": True,
+                "expandable": has_concept,
                 "context": {
                     "conceptSystem": r.get("conceptSystem"),
                     "conceptCode": r.get("conceptCode"),
-                },
+                } if has_concept else {},
                 "meta": {"date": r.get("date"), "value": value or None},
             }))
         return nodes
@@ -289,12 +337,17 @@ def build_patient_clinical_categories(patient_fhir_id: str):
     }
 
     nodes = []
+    nodes.extend(build_patient_location_hub(patient_fhir_id))
+
     for key, _rel, title, _color in CLINICAL_CATEGORIES:
         cnt = counts.get(key, 0)
         if cnt == 0:
             continue
-        shown = min(cnt, GRAPH_LEAF_LIMIT)
-        suffix = f" ({shown} of {cnt})" if cnt > GRAPH_LEAF_LIMIT else f" ({cnt})"
+        if key == "observations":
+            suffix = f" ({cnt})"
+        else:
+            shown = min(cnt, GRAPH_LEAF_LIMIT)
+            suffix = f" ({shown} of {cnt})" if cnt > GRAPH_LEAF_LIMIT else f" ({cnt})"
         nodes.append(wrap_graph_node({
             "id": f"ui:ClinicalCategory|{key}|{patient_fhir_id}",
             "type": "ClinicalCategory",
@@ -306,14 +359,19 @@ def build_patient_clinical_categories(patient_fhir_id: str):
     return nodes
 
 
-def build_clinical_category_expand(patient_fhir_id: str, category: str):
-    builders = {
-        "conditions": build_patient_conditions,
-        "observations": build_patient_observations,
-        "allergies": build_patient_allergies,
-        "encounters": build_patient_encounters,
-    }
-    builder = builders.get(category)
-    if not builder:
-        return []
-    return builder(patient_fhir_id)
+def build_clinical_category_expand(
+    patient_fhir_id: str,
+    category: str,
+    context: dict | None = None,
+):
+    context = context or {}
+    if category in ("observations", "conditions", "allergies"):
+        limit = 40
+        if category == "observations":
+            limit = min(_observation_expand_limit(patient_fhir_id, context), 40)
+        return build_patient_concept_hubs(patient_fhir_id, category, limit=limit)
+
+    if category == "encounters":
+        return build_patient_encounters(patient_fhir_id)
+
+    return []

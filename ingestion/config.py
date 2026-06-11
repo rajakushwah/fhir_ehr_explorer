@@ -27,8 +27,8 @@ def _int_or_none(value: str | None) -> int | None:
 
 # Parallel mapping (CPU-bound JSON parse + FHIR map)
 INGEST_MAP_WORKERS = int(os.getenv("INGEST_MAP_WORKERS", "4"))
-# Parallel Neo4j writers (I/O-bound); keep <= 6 on Neo4j Desktop
-INGEST_WRITE_WORKERS = int(os.getenv("INGEST_WRITE_WORKERS", "4"))
+# Parallel Neo4j writers (I/O-bound); 2-4 is safest on Neo4j Desktop
+INGEST_WRITE_WORKERS = int(os.getenv("INGEST_WRITE_WORKERS", "2"))
 # Patients committed per Neo4j transaction
 INGEST_TX_BATCH_SIZE = int(os.getenv("INGEST_TX_BATCH_SIZE", "3"))
 # Rows per UNWIND Cypher batch

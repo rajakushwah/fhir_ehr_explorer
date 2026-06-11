@@ -1,31 +1,33 @@
-/** Light FHIR node palette (matches clinical graph legend). */
+/** Soft classic pastel palette for graph nodes. */
 
 export const NODE_TYPE_COLORS = {
-  AllergyIntolerance: "#E85D3F",
-  Concept: "#B3C15B",
-  Condition: "#FFC645",
-  DiagnosticReport: "#6EA8F2",
-  Encounter: "#FFD1F5",
-  Immunization: "#89D4F5",
-  Location: "#F2C6E8",
-  MedicationRequest: "#F591BC",
-  Observation: "#00ACC1",
-  Organization: "#D7BFA5",
-  Patient: "#C2A679",
-  Practitioner: "#9EB8FF",
-  Procedure: "#8B8DFA",
+  AllergyIntolerance: "#F4D4CC",
+  Concept: "#DCE8C8",
+  Condition: "#F8E8C4",
+  DiagnosticReport: "#D4E4F7",
+  Encounter: "#F0DCE8",
+  Immunization: "#C8E8F0",
+  Location: "#F0E0EC",
+  MedicationRequest: "#F5D8E4",
+  Observation: "#C8E6EA",
+  Organization: "#E8DDD0",
+  Patient: "#E6D9C8",
+  Practitioner: "#D8E0F5",
+  Procedure: "#DCD8F5",
   // UI filter / hub nodes
-  PatientGroup: "#C7B8F5",
-  Gender: "#C7B8F5",
-  Region: "#9EB8FF",
-  ClinicalCategory: "#8B8DFA",
+  PatientGroup: "#E4DCF5",
+  Gender: "#E0E8F5",
+  Region: "#D8E4F8",
+  ClinicalCategory: "#E0DCF8",
 };
 
-/** Dark label text for light node fills */
-export const NODE_LABEL_COLOR = "#203f68";
+/** Readable label text on light node fills */
+export const NODE_LABEL_COLOR = "#4A5F7A";
+
+export const NODE_DEFAULT_COLOR = "#E4DCF5";
 
 export function getNodeTypeColor(type) {
-  return NODE_TYPE_COLORS[type] ?? "#C7B8F5";
+  return NODE_TYPE_COLORS[type] ?? NODE_DEFAULT_COLOR;
 }
 
 export function nodeBorderColor(type) {

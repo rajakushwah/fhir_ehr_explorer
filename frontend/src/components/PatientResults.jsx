@@ -1,9 +1,19 @@
+function formatCriticalValue(finding) {
+  const value = Number(finding.value);
+  const formatted = Number.isInteger(value) ? value : value.toFixed(1);
+  const unit = finding.unit ? ` ${finding.unit}` : "";
+  const arrow = finding.direction === "low" ? "↓" : "↑";
+  return `${finding.label} ${arrow} ${formatted}${unit}`;
+}
+
 function formatAggregationValue(metric, value) {
   if (metric === "avg") {
     return Number.isInteger(value) ? value : value.toFixed(1);
   }
   return Number(value).toLocaleString();
 }
+
+import { canVisualizeCohort } from "@/utils/graphFromCohort";
 
 export default function PatientResults({
   cohortResult,
@@ -12,6 +22,7 @@ export default function PatientResults({
   loading = false,
   onPrevPage,
   onNextPage,
+  onVisualize,
 }) {
   if (!cohortResult) {
     return (
@@ -30,8 +41,9 @@ export default function PatientResults({
     );
   }
 
-  const { patients, total, totalMatched, interpretation, queryType, aggregation } =
+  const { patients, total, totalMatched, interpretation, queryType, aggregation, parsed } =
     cohortResult;
+  const isCriticalSearch = parsed?.criticalMode != null;
 
   if (queryType === "aggregation" && aggregation) {
     const isGrouped = aggregation.rows.length > 1;
@@ -41,7 +53,18 @@ export default function PatientResults({
       <div className="patient-results aggregation-results">
         <header className="results-header">
           <h2>{interpretation}</h2>
-          <span className="badge badge-aggregation">{aggregation.summary}</span>
+          <div className="results-header-actions">
+            <span className="badge badge-aggregation">{aggregation.summary}</span>
+            {canVisualizeCohort(cohortResult) && (
+              <button
+                type="button"
+                className="btn-secondary results-visualize-btn"
+                onClick={() => onVisualize?.(cohortResult)}
+              >
+                Visualize in graph →
+              </button>
+            )}
+          </div>
         </header>
 
         <div className="aggregation-hero">
@@ -89,8 +112,9 @@ export default function PatientResults({
         <h2>No patients matched</h2>
         <p>{interpretation}</p>
         <p className="hint">
-          Try broadening location or condition terms. Sample data uses US states
-          (e.g. MA, Massachusetts) — not international locations.
+          {isCriticalSearch
+            ? "No patients exceeded clinical thresholds for the selected criteria. Try \"abnormal lab values\" for a broader search, or load more patient data."
+            : "Try broadening location or condition terms. Sample data uses US states (e.g. MA, Massachusetts) — not international locations."}
         </p>
       </div>
     );
@@ -107,11 +131,27 @@ export default function PatientResults({
     <div className={`patient-results${loading ? " is-loading" : ""}`}>
       <header className="results-header">
         <h2>{interpretation}</h2>
-        <span className="badge">
-          {showingTruncated || hasMore || canPrev
-            ? `${pageStart}–${pageEnd} of ${totalMatched.toLocaleString()}`
-            : `${totalMatched ?? total} patients`}
-        </span>
+        <div className="results-header-actions">
+          <span className={`badge${isCriticalSearch ? " badge-critical" : ""}`}>
+            {showingTruncated || hasMore || canPrev
+              ? `${pageStart}–${pageEnd} of ${totalMatched.toLocaleString()}`
+              : `${totalMatched ?? total} patients`}
+          </span>
+          {isCriticalSearch && (
+            <span className="badge badge-critical-mode">
+              {parsed.criticalMode === "abnormal" ? "Abnormal values" : "Critical values"}
+            </span>
+          )}
+          {canVisualizeCohort(cohortResult) && (
+            <button
+              type="button"
+              className="btn-secondary results-visualize-btn"
+              onClick={() => onVisualize?.(cohortResult)}
+            >
+              Visualize in graph →
+            </button>
+          )}
+        </div>
       </header>
       {(showingTruncated || hasMore || canPrev) && (
         <p className="results-truncation-hint">
@@ -129,18 +169,37 @@ export default function PatientResults({
             disabled={loading}
           >
             <div className="patient-card-top">
-              <span className="patient-avatar">
+              <span className={`patient-avatar${p.isCritical ? " patient-avatar-critical" : ""}`}>
                 {(p.gender || "?")[0].toUpperCase()}
               </span>
               <div>
-                <span className="patient-id">Patient</span>
+                <span className="patient-id">
+                  Patient
+                  {p.isCritical && <span className="critical-pill">Critical</span>}
+                </span>
                 <span className="patient-meta">
-                  {[p.gender, p.age != null ? `age ${p.age}` : null, p.city, p.state]
+                  {[p.gender, p.age != null ? `age ${p.age}` : null, p.city, p.state, p.country]
                     .filter(Boolean)
                     .join(" · ")}
                 </span>
               </div>
             </div>
+            {p.criticalFindings?.length > 0 && (
+              <div className="critical-findings">
+                {p.criticalFindings.slice(0, 3).map((f) => (
+                  <span
+                    key={`${f.code || f.label}-${f.direction}-${f.value}`}
+                    className={`tag tag-critical tag-critical-${f.severity}`}
+                    title={f.date ? `Recorded ${f.date}` : undefined}
+                  >
+                    {formatCriticalValue(f)}
+                  </span>
+                ))}
+                {p.criticalFindings.length > 3 && (
+                  <span className="tag muted">+{p.criticalFindings.length - 3} more</span>
+                )}
+              </div>
+            )}
             {p.conditions?.length > 0 && (
               <div className="condition-tags">
                 {p.conditions.slice(0, 2).map((c) => (

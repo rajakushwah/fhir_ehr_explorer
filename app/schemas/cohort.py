@@ -8,6 +8,7 @@ class CohortSearchRequest(BaseModel):
     condition: Optional[str] = None
     state: Optional[str] = None
     city: Optional[str] = None
+    country: Optional[str] = None
     gender: Optional[str] = None
     minAge: Optional[int] = None
     maxAge: Optional[int] = None
@@ -19,9 +20,21 @@ class ParsedFilters(BaseModel):
     condition: Optional[str] = None
     state: Optional[str] = None
     city: Optional[str] = None
+    country: Optional[str] = None
     gender: Optional[str] = None
     minAge: Optional[int] = None
     maxAge: Optional[int] = None
+    criticalMode: Optional[str] = None
+
+
+class CriticalFinding(BaseModel):
+    label: str
+    value: float
+    unit: Optional[str] = None
+    severity: str = "critical"
+    direction: str = "high"
+    date: Optional[str] = None
+    code: Optional[str] = None
 
 
 class PatientSummary(BaseModel):
@@ -29,9 +42,12 @@ class PatientSummary(BaseModel):
     gender: Optional[str] = None
     state: Optional[str] = None
     city: Optional[str] = None
+    country: Optional[str] = None
     birthDate: Optional[str] = None
     age: Optional[int] = None
     conditions: List[str] = []
+    isCritical: bool = False
+    criticalFindings: List[CriticalFinding] = []
 
 
 class AggregationRow(BaseModel):
@@ -43,6 +59,7 @@ class AggregationResult(BaseModel):
     metric: str
     target: str
     summary: str
+    groupBy: Optional[str] = None
     rows: List[AggregationRow]
 
 
@@ -58,3 +75,4 @@ class CohortSearchResponse(BaseModel):
     patients: List[PatientSummary]
     concept: Optional[Dict[str, Any]] = None
     aggregation: Optional[AggregationResult] = None
+    graphContext: Optional[Dict[str, Any]] = None

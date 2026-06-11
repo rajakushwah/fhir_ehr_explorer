@@ -22,6 +22,16 @@ US_STATE_ALIASES = {
     "wisconsin": "WI", "wyoming": "WY",
 }
 
+COUNTRY_ALIASES = {
+    "us": "US",
+    "usa": "US",
+    "u.s.": "US",
+    "u.s.a.": "US",
+    "united states": "US",
+    "united states of america": "US",
+    "america": "US",
+}
+
 CONDITION_HINTS = [
     "diabetes", "prediabetes", "asthma", "hypertension", "lupus", "covid",
     "arthritis", "cancer", "obesity", "heart", "pain", "allergy", "glucose",
@@ -40,12 +50,6 @@ GENDER_PATTERNS = [
     (re.compile(r"\b(male|men|man|boys?)\b", re.I), "male"),
 ]
 
-LOCATION_PATTERNS = [
-    re.compile(r"\b(?:who\s+(?:is|are)\s+)?from\s+([A-Za-z]{2,30})(?:\s|$|\?)", re.I),
-    re.compile(r"(?:location\s+is|located\s+in|living\s+in|from|in)\s+([a-z][a-z\s]{1,30}?)(?:\s+(?:and|with|who|that|suffering|having)|$)", re.I),
-    re.compile(r"(?:state|region|city)\s+(?:is|=|:)\s*([a-z][a-z\s]{1,30})", re.I),
-]
-
 CONDITION_PATTERNS = [
     re.compile(r"(?:suffering\s+from|diagnosed\s+with|having|with|who\s+have)\s+([a-z][a-z0-9\s\-]{2,40}?)(?:\s+(?:and|in|who|from)|$)", re.I),
     re.compile(r"who\s+(?:is|are|was|were)\s+(?!from\b)([a-z][a-z0-9\-]{2,30})(?:\s|$|\?)", re.I),
@@ -59,6 +63,7 @@ class ParsedCohort:
     condition: Optional[str] = None
     state: Optional[str] = None
     city: Optional[str] = None
+    country: Optional[str] = None
     gender: Optional[str] = None
     min_age: Optional[int] = None
     max_age: Optional[int] = None
@@ -72,13 +77,114 @@ def _normalize_state(text: str) -> Optional[str]:
         return t.upper()
     if t in US_STATE_ALIASES:
         return US_STATE_ALIASES[t]
-    return text.strip().title() if len(text.strip()) <= 3 else text.strip().title()
+    return text.strip().title()
+
+
+def _normalize_country(text: str) -> Optional[str]:
+    t = text.strip().lower().rstrip(".")
+    if not t:
+        return None
+    if t in COUNTRY_ALIASES:
+        return COUNTRY_ALIASES[t]
+    if len(t) == 2:
+        return t.upper()
+    return text.strip().title()
 
 
 def _clean_phrase(phrase: str) -> str:
     phrase = re.sub(r"\b(patients?|people|all|show\s+me|find|list)\b", "", phrase, flags=re.I)
     phrase = re.sub(r"\s+", " ", phrase).strip(" .,")
     return phrase
+
+
+def _is_state_token(token: str) -> bool:
+    t = token.strip().lower()
+    return (
+        t in US_STATE_ALIASES
+        or token.strip().upper() in US_STATE_ALIASES.values()
+        or len(token.strip()) <= 3
+    )
+
+
+def _is_country_token(token: str) -> bool:
+    t = token.strip().lower().rstrip(".")
+    return t in COUNTRY_ALIASES or len(t) == 2
+
+
+def _keyword_location_value(text: str, keyword: str) -> Optional[str]:
+    pattern = (
+        rf"\b{keyword}\s+(?:is|=|:)?\s*"
+        r"([A-Za-z][A-Za-z.\s\-']+?)"
+        r"(?=\s+\b(?:city|state|region|country|with|and|who|gender)\b|$|\?)"
+    )
+    match = re.search(pattern, text, re.I)
+    return _clean_phrase(match.group(1)) if match else None
+
+
+def _parse_location_filters(text: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    city = state = country = None
+
+    city_val = _keyword_location_value(text, "city")
+    if city_val:
+        city = city_val
+
+    state_val = _keyword_location_value(text, "state") or _keyword_location_value(text, "region")
+    if state_val:
+        state = _normalize_state(state_val)
+
+    country_val = _keyword_location_value(text, "country")
+    if country_val:
+        country = _normalize_country(country_val)
+
+    combined = re.search(
+        r"(?:in|from|located\s+in|living\s+in)\s+"
+        r"([A-Za-z][A-Za-z\s\-']+?)"
+        r"(?:,\s*([A-Za-z][A-Za-z\s\-']+?))?"
+        r"(?:,\s*([A-Za-z]{2,10}))?"
+        r"(?=\s+(?:with|who|and|that|suffering|having)|$|\?)",
+        text,
+        re.I,
+    )
+    if combined:
+        parts = [_clean_phrase(g) for g in combined.groups() if g and _clean_phrase(g)]
+        parts = [p for p in parts if p.lower() not in {"a", "the", "who"}]
+
+        if len(parts) >= 3:
+            if not city:
+                city = parts[0]
+            if not state:
+                state = _normalize_state(parts[1])
+            if not country:
+                country = _normalize_country(parts[2])
+        elif len(parts) == 2:
+            if _is_country_token(parts[1]):
+                if not state:
+                    state = _normalize_state(parts[0])
+                if not country:
+                    country = _normalize_country(parts[1])
+            elif _is_state_token(parts[1]):
+                if not city:
+                    city = parts[0]
+                if not state:
+                    state = _normalize_state(parts[1])
+            else:
+                if not city:
+                    city = parts[0]
+                if not state:
+                    state = _normalize_state(parts[1])
+        elif len(parts) == 1:
+            token = parts[0]
+            if _is_country_token(token):
+                if not country:
+                    country = _normalize_country(token)
+            elif _is_state_token(token):
+                if not state:
+                    state = _normalize_state(token)
+            else:
+                if not city:
+                    city = token
+
+    return city, state, country
 
 
 def parse_natural_query(text: str) -> ParsedCohort:
@@ -103,17 +209,10 @@ def parse_natural_query(text: str) -> ParsedCohort:
         if under:
             result.max_age = int(under.group(1))
 
-    for pattern in LOCATION_PATTERNS:
-        m = pattern.search(raw)
-        if m:
-            loc = _clean_phrase(m.group(1))
-            if loc and loc.lower() not in {"a", "the", "who"}:
-                normalized = _normalize_state(loc)
-                if len(loc) <= 3 or loc.upper() in US_STATE_ALIASES.values() or loc.lower() in US_STATE_ALIASES:
-                    result.state = normalized
-                else:
-                    result.city = loc
-                break
+    city, state, country = _parse_location_filters(raw)
+    result.city = city
+    result.state = state
+    result.country = country
 
     for pattern in CONDITION_PATTERNS:
         m = pattern.search(raw)
@@ -132,14 +231,20 @@ def parse_natural_query(text: str) -> ParsedCohort:
     return result
 
 
+def _format_location(parsed: ParsedCohort) -> Optional[str]:
+    parts = [p for p in (parsed.city, parsed.state, parsed.country) if p]
+    if not parts:
+        return None
+    return ", ".join(parts)
+
+
 def build_interpretation(parsed: ParsedCohort) -> str:
     parts = ["Patients"]
     if parsed.gender:
         parts.append(f"({parsed.gender})")
-    if parsed.state:
-        parts.append(f"in {parsed.state}")
-    elif parsed.city:
-        parts.append(f"in {parsed.city}")
+    location = _format_location(parsed)
+    if location:
+        parts.append(f"in {location}")
     if parsed.condition:
         parts.append(f"with {parsed.condition}")
     if parsed.min_age is not None or parsed.max_age is not None:

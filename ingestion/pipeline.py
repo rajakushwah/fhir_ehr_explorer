@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -22,7 +23,7 @@ from ingestion.config import (
 from ingestion.mappers.bundle_mapper import GraphPayload, map_bundle
 from ingestion.mappers.payload_codec import payload_from_dict, payload_to_dict
 from ingestion.parsers.bundle_parser import iter_bundle_files, load_bundle
-from ingestion.writers.batch_writer import write_payloads_batch
+from ingestion.writers.batch_writer import merge_concepts_batch, write_payloads_batch
 from ingestion.writers.csv_bulk import export_payloads_to_csv, load_csv_into_neo4j
 
 logger = logging.getLogger("ingestion")
@@ -54,17 +55,65 @@ def _chunked(items: list, size: int):
         yield items[i : i + size]
 
 
-def _write_mapped_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    payloads = [payload_from_dict(item["payload"]) for item in batch]
+def _collect_unique_concepts(mapped: list[dict[str, Any]]) -> list[dict[str, str]]:
+    unique: dict[tuple[str, str], dict[str, str]] = {}
+    for item in mapped:
+        payload = payload_from_dict(item["payload"])
+        for link in payload.concept_links:
+            key = (link["system"], link["code"])
+            if key not in unique:
+                unique[key] = {
+                    "system": link["system"],
+                    "code": link["code"],
+                    "display": link.get("display", ""),
+                }
+    return list(unique.values())
+
+
+def _merge_concepts_upfront(mapped: list[dict[str, Any]]) -> None:
+    concepts = _collect_unique_concepts(mapped)
+    if not concepts:
+        return
+
+    logger.info("[START] merge_concepts | unique=%d", len(concepts))
+    t0 = time.perf_counter()
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             with get_session() as session:
-                write_payloads_batch(session, payloads)
+                merge_concepts_batch(session, concepts)
             break
         except (TransientError, ServiceUnavailable) as exc:
             if attempt == MAX_RETRIES:
                 raise
-            wait = attempt * 2
+            wait = attempt * 2 + random.uniform(0, 1)
+            logger.warning("Retry %d/%d for merge_concepts: %s", attempt, MAX_RETRIES, exc)
+            time.sleep(wait)
+
+    logger.info("[OK]    merge_concepts | %.1fms | unique=%d", (time.perf_counter() - t0) * 1000, len(concepts))
+
+
+def _write_mapped_batch(
+    batch: list[dict[str, Any]],
+    *,
+    concepts_premerged: bool = False,
+) -> list[dict[str, Any]]:
+    payloads = [payload_from_dict(item["payload"]) for item in batch]
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            with get_session() as session:
+                write_payloads_batch(session, payloads, concepts_premerged=concepts_premerged)
+            break
+        except (TransientError, ServiceUnavailable) as exc:
+            if attempt == MAX_RETRIES:
+                names = ", ".join(item["file"] for item in batch[:3])
+                logger.error(
+                    "Batch failed after %d retries [%s...]: %s",
+                    MAX_RETRIES,
+                    names,
+                    exc,
+                )
+                raise
+            wait = attempt * 2 + random.uniform(0, 1)
             names = ", ".join(item["file"] for item in batch[:3])
             logger.warning("Retry %d/%d for batch [%s...]: %s", attempt, MAX_RETRIES, names, exc)
             time.sleep(wait)
@@ -74,6 +123,45 @@ def _write_mapped_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
         counts = {label: len(nodes) for label, nodes in payload.nodes.items()}
         results.append({"file": item["file"], "counts": counts})
     return results
+
+
+def clear_database() -> dict[str, int]:
+    """Wipe the configured database (drop + recreate — fastest clean slate)."""
+    from neo4j import GraphDatabase
+
+    from app.config import NEO4J_DATABASE, NEO4J_PASSWORD, NEO4J_URI, NEO4J_USER
+
+    logger.info("[START] clear_database | database=%s", NEO4J_DATABASE)
+    t0 = time.perf_counter()
+
+    nodes_before = 0
+    rel_before = 0
+    try:
+        with get_session() as session:
+            nodes_before = int(session.run("MATCH (n) RETURN count(n) AS c").single()["c"])
+            rel_before = int(session.run("MATCH ()-[r]->() RETURN count(r) AS c").single()["c"])
+    except Exception as exc:
+        logger.warning("Could not read counts before clear: %s", exc)
+
+    driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+    try:
+        with driver.session(database="system") as session:
+            session.run(f"DROP DATABASE {NEO4J_DATABASE} IF EXISTS WAIT").consume()
+            session.run(f"CREATE DATABASE {NEO4J_DATABASE} IF NOT EXISTS").consume()
+    finally:
+        driver.close()
+
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    summary = {
+        "nodes_before": nodes_before,
+        "relationships_before": rel_before,
+        "nodes_after": 0,
+        "relationships_after": 0,
+        "ms": round(elapsed_ms, 1),
+        "method": "drop_recreate",
+    }
+    logger.info("[OK]    clear_database | %s", summary)
+    return summary
 
 
 def apply_schema(schema_path: Path) -> None:
@@ -114,8 +202,17 @@ def ingest_directory(
     map_ms = (time.perf_counter() - t0) * 1000
     logger.info("[OK]    map_bundles | %.1fms | files=%d", map_ms, len(mapped))
 
+    _merge_concepts_upfront(mapped)
+
     batches = list(_chunked(mapped, INGEST_TX_BATCH_SIZE))
     results: list[dict] = []
+
+    if write_workers > 4:
+        logger.warning(
+            "write_workers=%d is high for Neo4j Desktop; deadlocks are likely. "
+            "Use --workers 2 or load-bulk for large imports.",
+            write_workers,
+        )
 
     logger.info(
         "[START] write_bundles | batches=%d | tx_batch=%d | write_workers=%d",
@@ -127,13 +224,16 @@ def ingest_directory(
     write_t0 = time.perf_counter()
     if write_workers <= 1 or len(batches) <= 1:
         for batch in batches:
-            batch_results = _write_mapped_batch(batch)
+            batch_results = _write_mapped_batch(batch, concepts_premerged=True)
             for item in batch_results:
                 logger.info("[OK]    ingest_bundle | %s | counts=%s", item["file"], item["counts"])
             results.extend(batch_results)
     else:
         with ThreadPoolExecutor(max_workers=write_workers) as pool:
-            futures = {pool.submit(_write_mapped_batch, batch): batch for batch in batches}
+            futures = {
+                pool.submit(_write_mapped_batch, batch, concepts_premerged=True): batch
+                for batch in batches
+            }
             for fut in as_completed(futures):
                 batch_results = fut.result()
                 for item in batch_results:

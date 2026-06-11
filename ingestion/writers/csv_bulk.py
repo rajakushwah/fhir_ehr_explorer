@@ -17,7 +17,7 @@ NODE_COLUMNS: dict[str, list[str]] = {
     "Organization": ["fhirId", "name"],
     "Location": ["fhirId", "name", "city", "state"],
     "Practitioner": ["fhirId", "name"],
-    "Patient": ["fhirId", "gender", "birthDate", "city", "state", "postalCode", "race", "ethnicity"],
+    "Patient": ["fhirId", "gender", "birthDate", "city", "state", "country", "postalCode", "race", "ethnicity"],
     "Encounter": [
         "fhirId", "status", "class", "periodStart", "periodEnd",
         "typeDisplay", "typeSystem", "typeCode",
@@ -143,38 +143,62 @@ def _load_nodes(session, label: str, columns: list[str], filename: str) -> None:
     ).consume()
 
 
-def _load_rel_csv(session, filename: str, cypher: str, op_name: str) -> None:
+BULK_TX_ROWS = max(INGEST_CYPHER_BATCH_SIZE, 5000)
+
+
+def _load_csv_in_transactions(
+    session,
+    filename: str,
+    inner_cypher: str,
+    op_name: str,
+    *,
+    batch_size: int = BULK_TX_ROWS,
+) -> None:
+    """Run large LOAD CSV operations in sub-transactions (avoids single huge tx)."""
     session.run(
-        cypher,
+        f"""
+        LOAD CSV WITH HEADERS FROM $file AS row
+        CALL {{
+            WITH row
+            {inner_cypher}
+        }} IN TRANSACTIONS OF $batchSize ROWS
+        """,
         file=f"file:///{filename}",
+        batchSize=batch_size,
         _log_op=op_name,
     ).consume()
 
 
-def load_csv_into_neo4j(session, import_dir: Path | None = None) -> None:
-    import_dir = import_dir or resolve_import_dir()
+def _load_rel_csv(session, filename: str, inner_cypher: str, op_name: str) -> None:
+    _load_csv_in_transactions(session, filename, inner_cypher, op_name)
 
-    for label, columns in NODE_COLUMNS.items():
-        csv_name = f"bulk_{label.lower()}.csv"
-        if (import_dir / csv_name).exists():
-            _load_nodes(session, label, columns, csv_name)
 
-    if (import_dir / "bulk_concept_links.csv").exists():
-        _load_rel_csv(
-            session,
-            "bulk_concept_links.csv",
-            """
-            LOAD CSV WITH HEADERS FROM $file AS row
-            MERGE (c:Concept {system: row.system, code: row.code})
-            SET c.display = coalesce(row.display, c.display),
-                c.text = coalesce(row.display, c.text)
-            WITH c, row
-            MATCH (r {fhirId: row.resourceFhirId})
-            MERGE (r)-[:CODED_AS]->(c)
-            """,
-            "bulk_load/concept_links",
-        )
+def _load_csv_concept_links(session, import_dir: Path) -> None:
+    if not (import_dir / "bulk_concept_links.csv").exists():
+        return
+    _load_csv_in_transactions(
+        session,
+        "bulk_concept_links.csv",
+        """
+        MERGE (c:Concept {system: row.system, code: row.code})
+        SET c.display = coalesce(row.display, c.display),
+            c.text = coalesce(row.display, c.text)
+        """,
+        "bulk_load/concepts",
+    )
+    _load_csv_in_transactions(
+        session,
+        "bulk_concept_links.csv",
+        """
+        MATCH (c:Concept {system: row.system, code: row.code})
+        MATCH (r {fhirId: row.resourceFhirId})
+        MERGE (r)-[:CODED_AS]->(c)
+        """,
+        "bulk_load/concept_links",
+    )
 
+
+def _load_csv_relationships(session, import_dir: Path) -> None:
     for rel, target_label in PATIENT_REL_LABEL.items():
         csv_name = f"bulk_{rel.lower()}.csv"
         if (import_dir / csv_name).exists():
@@ -182,7 +206,6 @@ def load_csv_into_neo4j(session, import_dir: Path | None = None) -> None:
                 session,
                 csv_name,
                 f"""
-                LOAD CSV WITH HEADERS FROM $file AS row
                 MATCH (p:Patient {{fhirId: row.patientFhirId}})
                 MATCH (r:{target_label} {{fhirId: row.resourceFhirId}})
                 MERGE (p)-[:{rel}]->(r)
@@ -194,7 +217,6 @@ def load_csv_into_neo4j(session, import_dir: Path | None = None) -> None:
         (
             "bulk_encounter_links.csv",
             """
-            LOAD CSV WITH HEADERS FROM $file AS row
             MATCH (r {fhirId: row.resourceFhirId})
             MATCH (e:Encounter {fhirId: row.encounterFhirId})
             MERGE (r)-[:PART_OF_ENCOUNTER]->(e)
@@ -204,7 +226,6 @@ def load_csv_into_neo4j(session, import_dir: Path | None = None) -> None:
         (
             "bulk_org_links.csv",
             """
-            LOAD CSV WITH HEADERS FROM $file AS row
             MATCH (e:Encounter {fhirId: row.encounterFhirId})
             MATCH (o:Organization {fhirId: row.orgFhirId})
             MERGE (e)-[:AT_ORGANIZATION]->(o)
@@ -214,7 +235,6 @@ def load_csv_into_neo4j(session, import_dir: Path | None = None) -> None:
         (
             "bulk_location_links.csv",
             """
-            LOAD CSV WITH HEADERS FROM $file AS row
             MATCH (e:Encounter {fhirId: row.encounterFhirId})
             MATCH (l:Location {fhirId: row.locationFhirId})
             MERGE (e)-[:AT_LOCATION]->(l)
@@ -222,8 +242,27 @@ def load_csv_into_neo4j(session, import_dir: Path | None = None) -> None:
             "bulk_load/location_links",
         ),
     ]
-    for filename, cypher, op_name in link_specs:
+    for filename, inner_cypher, op_name in link_specs:
         if (import_dir / filename).exists():
-            _load_rel_csv(session, filename, cypher, op_name)
+            _load_rel_csv(session, filename, inner_cypher, op_name)
+
+
+def load_csv_relationships_only(session, import_dir: Path | None = None) -> None:
+    """Load patient and resource relationships only (skip node + concept CSV)."""
+    import_dir = import_dir or resolve_import_dir()
+    _load_csv_relationships(session, import_dir)
+    logger.info("[OK]    csv_load_rels | dir=%s | batch=%d", import_dir, INGEST_CYPHER_BATCH_SIZE)
+
+
+def load_csv_into_neo4j(session, import_dir: Path | None = None) -> None:
+    import_dir = import_dir or resolve_import_dir()
+
+    for label, columns in NODE_COLUMNS.items():
+        csv_name = f"bulk_{label.lower()}.csv"
+        if (import_dir / csv_name).exists():
+            _load_nodes(session, label, columns, csv_name)
+
+    _load_csv_concept_links(session, import_dir)
+    _load_csv_relationships(session, import_dir)
 
     logger.info("[OK]    csv_load | dir=%s | batch=%d", import_dir, INGEST_CYPHER_BATCH_SIZE)

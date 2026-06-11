@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from app.services.cohort_aggregation_parser import ParsedAggregation
 from app.services.cohort_parser import ParsedCohort
+from app.services.location_filters import location_params, patient_location_where
 
 
 def _patient_match_prefix(concept: Optional[dict[str, Any]]) -> tuple[str, dict[str, Any]]:
@@ -21,23 +22,17 @@ def _patient_match_prefix(concept: Optional[dict[str, Any]]) -> tuple[str, dict[
 
 
 def _patient_where() -> str:
-    return """
-    WHERE ($gender IS NULL OR p.gender = $gender)
-      AND ($state IS NULL OR toLower(coalesce(p.state,'')) CONTAINS toLower($state)
-           OR toLower(coalesce(p.state,'')) = toLower($state))
-      AND ($city IS NULL OR toLower(coalesce(p.city,'')) CONTAINS toLower($city))
-    """
+    return patient_location_where()
 
 
 def _patient_params(parsed: ParsedCohort, extra: Optional[dict] = None) -> dict[str, Any]:
-    params: dict[str, Any] = {
-        "gender": parsed.gender,
-        "state": parsed.state,
-        "city": parsed.city,
-    }
-    if extra:
-        params.update(extra)
-    return params
+    return location_params(
+        gender=parsed.gender,
+        state=parsed.state,
+        city=parsed.city,
+        country=parsed.country,
+        extra=extra,
+    )
 
 
 def run_aggregation(

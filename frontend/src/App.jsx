@@ -2,12 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { checkHealth, searchCohort } from "@/api/api";
 import CohortPanel from "@/components/CohortPanel";
 import GraphCanvas from "@/components/GraphCanvas/GraphCanvas";
-import GraphLegend from "@/components/GraphLegend";
-import GraphToolbar from "@/components/GraphToolbar";
+import GraphFloatingControls from "@/components/GraphFloatingControls";
+import GraphLeftToolbar from "@/components/GraphLeftToolbar";
+import GraphStatistics from "@/components/GraphStatistics";
+import GraphStatusBar from "@/components/GraphStatusBar";
 import NodeDetails from "@/components/NodeDetails";
+import NodeInspector from "@/components/NodeInspector/NodeInspector";
 import PatientResults from "@/components/PatientResults";
 import ThemeToggle from "@/components/ThemeToggle";
 import { useTheme } from "@/hooks/useTheme";
+import { buildGraphFromCohort, canVisualizeCohort } from "@/utils/graphFromCohort";
 
 const PAGE_SIZE = 50;
 
@@ -20,17 +24,30 @@ export default function App() {
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [rootNode, setRootNode] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
-  const [stats, setStats] = useState({ nodes: 0, edges: 0 });
+  const [inspectorNode, setInspectorNode] = useState(null);
+  const [stats, setStats] = useState({
+    nodes: 0,
+    edges: 0,
+    visibleNodes: 0,
+    byType: {},
+  });
   const [loading, setLoading] = useState(false);
   const [fitTrigger, setFitTrigger] = useState(0);
+  const [expandAllTrigger, setExpandAllTrigger] = useState(0);
+  const [collapseAllTrigger, setCollapseAllTrigger] = useState(0);
+  const [relayoutTrigger, setRelayoutTrigger] = useState(0);
   const [healthStatus, setHealthStatus] = useState({
     backendOnline: true,
     neo4jOnline: true,
     neo4jError: null,
   });
-  const [detailsMinimized, setDetailsMinimized] = useState(false);
-  const [legendMinimized, setLegendMinimized] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [graphLayout, setGraphLayout] = useState("fcose");
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [patientExpandLimit, setPatientExpandLimit] = useState(50);
+  const [graphNotice, setGraphNotice] = useState(null);
   const cyRef = useRef(null);
+  const graphApiRef = useRef(null);
   const resultsTopRef = useRef(null);
 
   useEffect(() => {
@@ -63,20 +80,61 @@ export default function App() {
   }, []);
 
   const handleVisualize = useCallback((result) => {
-    if (!result?.concept) return;
+    const spec = buildGraphFromCohort(result);
+    if (!spec) return;
     setSelectedNode(null);
-    setDetailsMinimized(false);
-    setRootNode({
-      conceptSystem: result.concept.conceptSystem,
-      conceptCode: result.concept.conceptCode,
-      label: result.concept.label,
-    });
+    setInspectorNode(null);
+    setRootNode(spec);
     setView("graph");
     setFitTrigger((n) => n + 1);
   }, []);
 
-  const handleCyReady = useCallback((cy) => {
-    cyRef.current = cy;
+  const handleCyReady = useCallback((api) => {
+    graphApiRef.current = api;
+    cyRef.current = api?.cy ?? api;
+  }, []);
+
+  const handleZoomIn = useCallback(() => {
+    const cy = graphApiRef.current?.cy ?? cyRef.current;
+    if (!cy || cy.destroyed()) return;
+    cy.zoom({ level: Math.min(cy.maxZoom(), cy.zoom() * 1.2) });
+    setZoomLevel(cy.zoom());
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    const cy = graphApiRef.current?.cy ?? cyRef.current;
+    if (!cy || cy.destroyed()) return;
+    cy.zoom({ level: Math.max(cy.minZoom(), cy.zoom() / 1.2) });
+    setZoomLevel(cy.zoom());
+  }, []);
+
+  const handleFocusNode = useCallback((node) => {
+    graphApiRef.current?.focusNode?.(node);
+  }, []);
+
+  const handleRevealNode = useCallback((nodeOrNeighbor) => {
+    const api = graphApiRef.current;
+    if (!api) return;
+    if (nodeOrNeighbor?.isNode?.()) {
+      api.expandNode?.(nodeOrNeighbor);
+      return;
+    }
+    if (nodeOrNeighbor?.cyNode) {
+      api.expandNode?.(nodeOrNeighbor.cyNode);
+    }
+  }, []);
+
+  const handleExpandSelected = useCallback(() => {
+    if (!selectedNode?.id) return;
+    const cy = graphApiRef.current?.cy ?? cyRef.current;
+    const el = cy?.getElementById(selectedNode.id);
+    if (el?.length) graphApiRef.current?.expandNode?.(el);
+  }, [selectedNode]);
+
+  const handleDismissNode = useCallback((node) => {
+    graphApiRef.current?.dismissNode?.(node);
+    setSelectedNode(null);
+    setInspectorNode(null);
   }, []);
 
   const handleSelectPatient = useCallback((patient) => {
@@ -99,7 +157,8 @@ export default function App() {
   const handleClearGraph = useCallback(() => {
     setRootNode(null);
     setSelectedNode(null);
-    setStats({ nodes: 0, edges: 0 });
+    setInspectorNode(null);
+    setStats({ nodes: 0, edges: 0, visibleNodes: 0, byType: {} });
   }, []);
 
   const handlePrevPage = useCallback(() => {
@@ -211,6 +270,7 @@ export default function App() {
                 loading={cohortSearching}
                 onPrevPage={handlePrevPage}
                 onNextPage={handleNextPage}
+                onVisualize={handleVisualize}
               />
             </div>
             {selectedPatient && (
@@ -227,8 +287,20 @@ export default function App() {
                       Gender: selectedPatient.gender,
                       City: selectedPatient.city,
                       State: selectedPatient.state,
+                      Country: selectedPatient.country,
                       BirthDate: selectedPatient.birthDate,
                       Conditions: selectedPatient.conditions?.join(", "),
+                      ...(selectedPatient.criticalFindings?.length
+                        ? {
+                            CriticalFindings: selectedPatient.criticalFindings
+                              .map((f) => {
+                                const unit = f.unit ? ` ${f.unit}` : "";
+                                const arrow = f.direction === "low" ? "↓" : "↑";
+                                return `${f.label} ${arrow} ${f.value}${unit}`;
+                              })
+                              .join("; "),
+                          }
+                        : {}),
                     },
                   }}
                 />
@@ -252,50 +324,119 @@ export default function App() {
           </div>
 
           <div className={`graph-view${view !== "graph" ? " view-hidden" : ""}`}>
-            <GraphToolbar
-              stats={stats}
-              loading={loading}
-              onFit={() => setFitTrigger((n) => n + 1)}
-              onClear={handleClearGraph}
-              onZoomIn={() => cyRef.current?.zoom(cyRef.current.zoom() * 1.25)}
-              onZoomOut={() => cyRef.current?.zoom(cyRef.current.zoom() * 0.8)}
-            />
-            <GraphCanvas
-              rootNode={rootNode}
-              onNodeSelect={(node) => {
-                setSelectedNode(node);
-                if (node) setDetailsMinimized(false);
-              }}
-              onStatsChange={setStats}
-              onLoadingChange={setLoading}
-              fitTrigger={fitTrigger}
-              visible={view === "graph"}
-              theme={theme}
-              onCyReady={handleCyReady}
-            />
-            {!rootNode && (
-              <div className="graph-placeholder">
-                <p>Run a search and click <strong>Visualize in graph</strong>, or switch back to Patients.</p>
-              </div>
-            )}
+            <div className="graph-main graph-main-bloom">
+              <GraphCanvas
+                rootNode={rootNode}
+                onNodeSelect={(node) => {
+                  setSelectedNode(node);
+                  if (!node) setInspectorNode(null);
+                }}
+                onStatsChange={setStats}
+                onLoadingChange={setLoading}
+                fitTrigger={fitTrigger}
+                expandAllTrigger={expandAllTrigger}
+                collapseAllTrigger={collapseAllTrigger}
+                relayoutTrigger={relayoutTrigger}
+                layoutMode={graphLayout}
+                expandLimit={patientExpandLimit}
+                visible={view === "graph"}
+                theme={theme}
+                onCyReady={handleCyReady}
+                onZoomChange={setZoomLevel}
+                onExpandNotice={(message) => {
+                  setGraphNotice(message);
+                  window.setTimeout(() => setGraphNotice(null), 8000);
+                }}
+              />
 
-            <GraphLegend
-              minimized={legendMinimized}
-              onToggleMinimize={() => setLegendMinimized((m) => !m)}
-            />
+              <GraphLeftToolbar
+                statsOpen={statsOpen}
+                onToggleStats={() => setStatsOpen((o) => !o)}
+                onRelayout={() => setRelayoutTrigger((n) => n + 1)}
+                onExpandAll={() => setExpandAllTrigger((n) => n + 1)}
+                onCollapseAll={() => setCollapseAllTrigger((n) => n + 1)}
+                onClear={handleClearGraph}
+                disabled={!rootNode || loading}
+              />
 
-            {selectedNode && (
-              <div className={`graph-details-float${detailsMinimized ? " is-minimized" : ""}`}>
-                <NodeDetails
-                  node={selectedNode}
-                  compact
-                  minimized={detailsMinimized}
-                  onMinimize={() => setDetailsMinimized(true)}
-                  onExpand={() => setDetailsMinimized(false)}
-                  onClose={() => setSelectedNode(null)}
+              {statsOpen && (
+                <div className="bloom-stats-popover">
+                  <GraphStatistics
+                    stats={stats}
+                    loading={loading}
+                    hasGraph={!!rootNode}
+                    minimized={false}
+                    expandLimit={patientExpandLimit}
+                    onExpandLimitChange={setPatientExpandLimit}
+                    onToggleMinimize={() => setStatsOpen(false)}
+                    onExpandAll={() => setExpandAllTrigger((n) => n + 1)}
+                    onCollapseAll={() => setCollapseAllTrigger((n) => n + 1)}
+                    onRelayout={() => setRelayoutTrigger((n) => n + 1)}
+                    onFit={() => setFitTrigger((n) => n + 1)}
+                    onClear={handleClearGraph}
+                  />
+                </div>
+              )}
+
+              <GraphStatusBar
+                stats={stats}
+                selectedCount={selectedNode ? 1 : 0}
+                selectedNode={selectedNode}
+                loading={loading}
+                onExpand={handleExpandSelected}
+                onExplore={() => {
+                  if (selectedNode) setInspectorNode(selectedNode);
+                }}
+              />
+
+              <GraphFloatingControls
+                layout={graphLayout}
+                onLayoutChange={(name) => {
+                  setGraphLayout(name);
+                  setRelayoutTrigger((n) => n + 1);
+                }}
+                onZoomIn={handleZoomIn}
+                onZoomOut={handleZoomOut}
+                onFit={() => setFitTrigger((n) => n + 1)}
+                zoomLevel={zoomLevel}
+              />
+
+              {graphNotice && (
+                <div className="graph-expand-notice" role="status">
+                  {graphNotice}
+                </div>
+              )}
+
+              {!rootNode && (
+                <div className="graph-placeholder">
+                  {cohortResult && canVisualizeCohort(cohortResult) ? (
+                    <>
+                      <p>Visualize your current search result as an interactive graph.</p>
+                      <button
+                        type="button"
+                        className="btn-primary graph-placeholder-btn"
+                        onClick={() => handleVisualize(cohortResult)}
+                      >
+                        Visualize in graph →
+                      </button>
+                    </>
+                  ) : (
+                    <p>Run a search and click <strong>Visualize in graph</strong>, or switch back to Patients.</p>
+                  )}
+                </div>
+              )}
+
+              {inspectorNode && (
+                <NodeInspector
+                  node={inspectorNode}
+                  cy={graphApiRef.current?.cy ?? cyRef.current}
+                  onClose={() => setInspectorNode(null)}
+                  onFocusNode={handleFocusNode}
+                  onRevealNode={handleRevealNode}
+                  onDismissNode={handleDismissNode}
                 />
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </main>
       </div>

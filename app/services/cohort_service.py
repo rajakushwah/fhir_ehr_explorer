@@ -9,9 +9,16 @@ from app.config import MAX_PATIENT_RESULTS
 from app.db.neo4j import get_session
 from app.schemas.cohort import CohortSearchRequest, CohortSearchResponse, ParsedFilters, PatientSummary
 from app.services.cohort_aggregation import count_matching_patients, run_aggregation
+from app.services.cohort_graph import build_graph_context
 from app.services.cohort_aggregation_parser import (
     build_aggregation_interpretation,
     parse_aggregation_query,
+)
+from app.services.cohort_critical import search_critical_patients
+from app.services.location_filters import location_params, patient_location_where
+from app.services.cohort_critical_parser import (
+    build_critical_interpretation,
+    parse_critical_query,
 )
 from app.services.cohort_parser import (
     CONDITION_ALIASES,
@@ -31,6 +38,8 @@ def _merge_filters(req: CohortSearchRequest) -> ParsedCohort:
         parsed.state = req.state
     if req.city:
         parsed.city = req.city
+    if req.country:
+        parsed.country = req.country
     if req.gender:
         parsed.gender = req.gender.lower()
     if req.minAge is not None:
@@ -108,6 +117,7 @@ def _resolve_concept(session, condition: str) -> Optional[dict[str, Any]]:
 def search_cohort(req: CohortSearchRequest) -> CohortSearchResponse:
     parsed = _merge_filters(req)
     limit = min(req.limit, MAX_PATIENT_RESULTS)
+    critical = parse_critical_query(req.query or "", parsed) if req.query else None
     agg = parse_aggregation_query(req.query or "", parsed) if req.query else None
 
     with get_session() as session:
@@ -115,15 +125,23 @@ def search_cohort(req: CohortSearchRequest) -> CohortSearchResponse:
         if parsed.condition:
             concept = _resolve_concept(session, parsed.condition)
 
+        if critical and critical.is_critical_search:
+            return _search_critical(session, parsed, critical, concept, limit, req.offset)
+
         if agg and agg.is_aggregation:
             return _search_aggregation(session, agg, parsed, concept)
 
         patients, total_matched = _fetch_patient_list(session, parsed, concept, limit, req.offset)
 
+    return _build_list_response(parsed, concept, patients, total_matched, limit, req.offset)
+
+
+def _build_list_response(parsed, concept, patients, total_matched, limit, offset):
     parsed_out = ParsedFilters(
         condition=parsed.condition,
         state=parsed.state,
         city=parsed.city,
+        country=parsed.country,
         gender=parsed.gender,
         minAge=parsed.min_age,
         maxAge=parsed.max_age,
@@ -143,11 +161,50 @@ def search_cohort(req: CohortSearchRequest) -> CohortSearchResponse:
         queryType="list",
         total=len(patients),
         totalMatched=total_matched,
-        offset=req.offset,
+        offset=offset,
         limit=limit,
-        hasMore=(req.offset + len(patients)) < total_matched,
+        hasMore=(offset + len(patients)) < total_matched,
         patients=patients,
         concept=concept_out,
+        graphContext=build_graph_context(parsed, concept),
+    )
+
+
+def _search_critical(session, parsed, critical, concept, limit, offset) -> CohortSearchResponse:
+    patients, total_matched = search_critical_patients(
+        session, parsed, critical, limit, offset, concept
+    )
+    parsed_out = ParsedFilters(
+        condition=parsed.condition,
+        state=parsed.state,
+        city=parsed.city,
+        country=parsed.country,
+        gender=parsed.gender,
+        minAge=parsed.min_age,
+        maxAge=parsed.max_age,
+        criticalMode=critical.severity,
+    )
+    concept_out = None
+    if concept:
+        concept_out = {
+            "conceptSystem": concept["system"],
+            "conceptCode": concept["code"],
+            "label": concept["label"],
+        }
+    graph_ctx = build_graph_context(parsed, concept)
+    graph_ctx["criticalMode"] = critical.severity
+    return CohortSearchResponse(
+        interpretation=build_critical_interpretation(critical, parsed),
+        parsed=parsed_out,
+        queryType="list",
+        total=len(patients),
+        totalMatched=total_matched,
+        offset=offset,
+        limit=limit,
+        hasMore=(offset + len(patients)) < total_matched,
+        patients=patients,
+        concept=concept_out,
+        graphContext=graph_ctx,
     )
 
 
@@ -157,6 +214,7 @@ def _search_aggregation(session, agg, parsed, concept) -> CohortSearchResponse:
         condition=parsed.condition,
         state=parsed.state,
         city=parsed.city,
+        country=parsed.country,
         gender=parsed.gender,
         minAge=parsed.min_age,
         maxAge=parsed.max_age,
@@ -176,6 +234,7 @@ def _search_aggregation(session, agg, parsed, concept) -> CohortSearchResponse:
         metric=agg.metric,
         target=agg.target,
         summary=summary,
+        groupBy=agg.group_by,
         rows=[AggregationRow(label=r["label"], value=r["value"]) for r in result["rows"]],
     )
     return CohortSearchResponse(
@@ -191,6 +250,7 @@ def _search_aggregation(session, agg, parsed, concept) -> CohortSearchResponse:
             "label": concept["label"],
         } if concept else None,
         aggregation=aggregation,
+        graphContext=build_graph_context(parsed, concept, agg.group_by),
     )
 
 
@@ -200,46 +260,44 @@ def _fetch_patient_list(session, parsed, concept, limit, offset=0):
     if concept:
         rows = session.run(
             f"""
-            MATCH (concept:Concept {{system: $system, code: $code}})
+            MATCH (concept:Concept {{system: $conceptSystem, code: $conceptCode}})
             MATCH (concept)<-[:CODED_AS]-(cond:Condition)<-[:HAS_CONDITION]-(p:Patient)
-            WHERE ($gender IS NULL OR p.gender = $gender)
-              AND ($state IS NULL OR toLower(coalesce(p.state,'')) CONTAINS toLower($state)
-                   OR toLower(coalesce(p.state,'')) = toLower($state))
-              AND ($city IS NULL OR toLower(coalesce(p.city,'')) CONTAINS toLower($city))
+            {patient_location_where()}
             WITH DISTINCT p
             OPTIONAL MATCH (p)-[:HAS_CONDITION]->(c2:Condition)-[:CODED_AS]->(cx:Concept)
             WITH p, collect(DISTINCT coalesce(cx.display, cx.text))[..5] AS conditions
             RETURN p.fhirId AS fhirId, p.gender AS gender, p.state AS state,
-                   p.city AS city, p.birthDate AS birthDate, conditions
+                   p.city AS city, p.country AS country, p.birthDate AS birthDate, conditions
             {order_clause}
             """,
-            system=concept["system"],
-            code=concept["code"],
-            gender=parsed.gender,
-            state=parsed.state,
-            city=parsed.city,
-            limit=limit,
-            offset=offset,
+            **location_params(
+                gender=parsed.gender,
+                state=parsed.state,
+                city=parsed.city,
+                country=parsed.country,
+                concept_system=concept["system"],
+                concept_code=concept["code"],
+                extra={"limit": limit, "offset": offset},
+            ),
         )
     else:
         rows = session.run(
             f"""
             MATCH (p:Patient)
-            WHERE ($gender IS NULL OR p.gender = $gender)
-              AND ($state IS NULL OR toLower(coalesce(p.state,'')) CONTAINS toLower($state)
-                   OR toLower(coalesce(p.state,'')) = toLower($state))
-              AND ($city IS NULL OR toLower(coalesce(p.city,'')) CONTAINS toLower($city))
+            {patient_location_where()}
             OPTIONAL MATCH (p)-[:HAS_CONDITION]->(:Condition)-[:CODED_AS]->(cx:Concept)
             WITH p, collect(DISTINCT coalesce(cx.display, cx.text))[..5] AS conditions
             RETURN p.fhirId AS fhirId, p.gender AS gender, p.state AS state,
-                   p.city AS city, p.birthDate AS birthDate, conditions
+                   p.city AS city, p.country AS country, p.birthDate AS birthDate, conditions
             {order_clause}
             """,
-            gender=parsed.gender,
-            state=parsed.state,
-            city=parsed.city,
-            limit=limit,
-            offset=offset,
+            **location_params(
+                gender=parsed.gender,
+                state=parsed.state,
+                city=parsed.city,
+                country=parsed.country,
+                extra={"limit": limit, "offset": offset},
+            ),
         )
 
     patients: list[PatientSummary] = []
@@ -255,6 +313,7 @@ def _fetch_patient_list(session, parsed, concept, limit, offset=0):
                 gender=r.get("gender"),
                 state=r.get("state"),
                 city=r.get("city"),
+                country=r.get("country"),
                 birthDate=r.get("birthDate"),
                 age=age,
                 conditions=r.get("conditions") or [],
@@ -278,6 +337,16 @@ def get_filter_options() -> dict[str, Any]:
             "MATCH (p:Patient) WHERE p.city IS NOT NULL "
             "RETURN DISTINCT p.city AS city ORDER BY city LIMIT 30"
         )]
+        countries = [r["country"] for r in session.run(
+            "MATCH (p:Patient) WHERE p.country IS NOT NULL AND p.country <> '' "
+            "RETURN DISTINCT p.country AS country ORDER BY country"
+        )]
+        if not countries:
+            has_patients = session.run(
+                "MATCH (p:Patient) RETURN count(p) AS c LIMIT 1"
+            ).single()
+            if has_patients and int(has_patients["c"]) > 0:
+                countries = ["US"]
         genders = [r["gender"] for r in session.run(
             "MATCH (p:Patient) WHERE p.gender IS NOT NULL "
             "RETURN DISTINCT p.gender AS gender"
@@ -293,6 +362,7 @@ def get_filter_options() -> dict[str, Any]:
     return {
         "states": states,
         "cities": cities,
+        "countries": countries,
         "genders": genders,
         "conditions": conditions,
     }
