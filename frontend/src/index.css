@@ -575,6 +575,12 @@ select {
   color: var(--muted);
 }
 
+.top-bar-intelligence-btn {
+  margin-left: auto;
+  font-size: 0.78rem;
+  padding: 6px 14px;
+}
+
 .cohort-view {
   flex: 1;
   display: grid;
@@ -1135,6 +1141,23 @@ select {
 
 .bloom-collapse-btn:hover {
   background: #f59e0b;
+  color: #fff;
+}
+
+.bloom-similar-btn {
+  padding: 4px 12px;
+  border: 1px solid #6366f1;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.08);
+  color: #4f46e5;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.bloom-similar-btn:hover {
+  background: #6366f1;
   color: #fff;
 }
 
@@ -2469,4 +2492,340 @@ select {
     border-left: none;
     border-top: 1px solid var(--border);
   }
+}
+
+.clinical-intelligence-panel {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  width: min(360px, calc(100% - 32px));
+  max-height: calc(100% - 96px);
+  z-index: 13;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--panel-overlay);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(12px);
+}
+
+.clinical-intelligence-minimized {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  z-index: 13;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(320px, calc(100% - 32px));
+  padding: 10px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-overlay);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  backdrop-filter: blur(10px);
+}
+
+.clinical-intelligence-minimized:hover {
+  border-color: var(--accent);
+}
+
+.clinical-intelligence-minimized-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.clinical-intelligence-minimized-sub {
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.clinical-intelligence-minimized-expand {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.clinical-intelligence-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.clinical-intelligence-kicker {
+  margin: 0 0 4px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.clinical-intelligence-title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.clinical-intelligence-body {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+}
+
+.clinical-intelligence-summary {
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.clinical-intelligence-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.clinical-intelligence-stats div {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.clinical-intelligence-stats dt {
+  margin: 0 0 4px;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.clinical-intelligence-stats dd {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.clinical-intelligence-section {
+  margin-bottom: 14px;
+}
+
+.clinical-intelligence-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.clinical-intelligence-hint {
+  margin: 0 0 8px;
+  font-size: 0.75rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.clinical-intelligence-list,
+.clinical-intelligence-concepts,
+.clinical-intelligence-similar-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.clinical-intelligence-list li,
+.clinical-intelligence-similar-list li {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.clinical-intelligence-list p,
+.clinical-intelligence-similar-list p {
+  margin: 4px 0 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.clinical-intelligence-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  margin-top: 4px;
+}
+
+.clinical-intelligence-concept-btn,
+.clinical-intelligence-similar-btn {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.clinical-intelligence-concept-btn {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.clinical-intelligence-concept-btn.is-selected {
+  border-color: #d946a8;
+  background: rgba(217, 70, 168, 0.08);
+}
+
+.clinical-intelligence-drilldown {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.clinical-intelligence-patient-split {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.clinical-intelligence-patient-split li {
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  border: 1px solid var(--border);
+}
+
+.clinical-intelligence-patient-split li.is-with {
+  background: rgba(5, 150, 105, 0.08);
+  border-color: rgba(5, 150, 105, 0.35);
+}
+
+.clinical-intelligence-patient-split li.is-with.is-selected {
+  background: rgba(5, 150, 105, 0.16);
+  border-color: #059669;
+  box-shadow: 0 0 0 1px rgba(5, 150, 105, 0.25);
+}
+
+.clinical-intelligence-patient-split li.is-without.is-selected {
+  opacity: 0.85;
+  border-color: var(--border);
+}
+
+.clinical-intelligence-patient-split li.is-without {
+  background: var(--surface);
+  opacity: 0.55;
+}
+
+.clinical-intelligence-patient-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.clinical-intelligence-patient-split li.is-with .clinical-intelligence-patient-btn:hover {
+  color: #047857;
+}
+
+.clinical-intelligence-concept-label {
+  flex: 1;
+  font-size: 0.78rem;
+}
+
+.clinical-intelligence-concept-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.clinical-intelligence-similar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.clinical-intelligence-similar-head span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #4f46e5;
+}
+
+.clinical-intelligence-tag {
+  display: inline-block;
+  margin-right: 6px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.clinical-intelligence-tag.shared {
+  color: #059669;
+}
+
+.clinical-intelligence-tag.unique {
+  color: #6366f1;
+}
+
+.clinical-intelligence-anchor {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(217, 70, 168, 0.08);
+  border: 1px solid rgba(217, 70, 168, 0.25);
+}
+
+.clinical-intelligence-loading,
+.clinical-intelligence-error {
+  margin: 0;
+  padding: 12px 16px;
+  font-size: 0.8rem;
+}
+
+.clinical-intelligence-error {
+  color: var(--danger);
+}
+
+.clinical-intelligence-back {
+  width: 100%;
+  margin-top: 8px;
 }

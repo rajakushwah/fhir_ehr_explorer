@@ -4,6 +4,7 @@ import { expandNode } from "@/api/api";
 import { getCytoscapeStyles } from "./graphStyles";
 import {
   computeChildPositions,
+  computeDrilldownPositions,
   ensureShortLabel,
   registerFcose,
   runExpandLayout,
@@ -11,6 +12,7 @@ import {
 } from "./layout";
 import { resolveEdgeRel } from "./edgeLabels";
 import { computeGraphStats } from "./graphStats";
+import { communityColor } from "@/components/ClinicalIntelligencePanel";
 
 registerFcose(Cytoscape);
 
@@ -51,6 +53,117 @@ function deferFit(cy, padding = 80) {
     requestAnimationFrame(() => fitGraph(cy, padding));
   });
 }
+
+/** Keep drill-down readable — don't zoom out to fit huge rings. */
+function focusDrilldownGraph(cy, centerNode) {
+  if (!cy || cy.destroyed() || !centerNode?.length) return;
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const hood = centerNode.closedNeighborhood();
+      const minZoom = 0.62;
+      const maxZoom = 1.15;
+      cy.resize();
+      cy.fit(hood, 48);
+      const fittedZoom = cy.zoom();
+      cy.zoom({
+        level: Math.min(maxZoom, Math.max(minZoom, fittedZoom)),
+        renderedPosition: { x: cy.width() / 2, y: cy.height() / 2 },
+      });
+      cy.center(centerNode);
+    });
+  });
+}
+
+function applyDrilldownPatientPick(cy, el) {
+  cy.nodes().removeClass("concept-drill-picked dimmed highlighted");
+  cy.edges().removeClass("highlighted");
+
+  if (!el || el.empty()) return;
+
+  el.addClass("concept-drill-picked highlighted").removeClass("dimmed");
+  el.connectedEdges().addClass("highlighted");
+  cy.nodes(".concept-drill-with, .concept-drill-without").not(el).addClass("dimmed");
+  cy.nodes(".concept-drill-center, .concept-drill-summary").removeClass("dimmed");
+  el.select();
+}
+
+function focusDrilldownPatientNode(cy, patient, conceptNodeId) {
+  if (!cy || cy.destroyed() || !patient?.fhirId) return null;
+
+  const nodeId = `ui:patient|${patient.fhirId}`;
+  let el = cy.getElementById(nodeId);
+  const hasCondition = patient.hasCondition !== false;
+
+  if (!el.length) {
+    const conceptEl = conceptNodeId
+      ? cy.getElementById(conceptNodeId)
+      : cy.nodes(".concept-drill-center").first();
+    if (!conceptEl.length) return null;
+
+    const center = conceptEl.position();
+    const peerCount = cy.nodes(".concept-drill-with, .concept-drill-without").length;
+    const angle = (2 * Math.PI * peerCount) / Math.max(peerCount + 1, 8) - Math.PI / 2;
+    const radius = (hasCondition ? 105 : 140) * 1.25;
+    const pos = {
+      x: center.x + radius * Math.cos(angle),
+      y: center.y + radius * Math.sin(angle),
+    };
+
+    const data = ensureShortLabel({
+      id: nodeId,
+      type: "Patient",
+      label: patient.label || patient.name || "Patient",
+      expandable: true,
+      context: { patientFhirId: patient.fhirId },
+      meta: { hasCondition, drilldownPatient: true },
+    });
+    data.nodeSize = hasCondition ? 58 : 50;
+
+    cy.add({
+      group: "nodes",
+      data,
+      position: pos,
+      classes: [
+        "show-label",
+        "analytics-node",
+        "expandable",
+        hasCondition ? "concept-drill-with" : "concept-drill-without",
+      ].join(" "),
+    });
+
+    if (hasCondition) {
+      cy.add({
+        group: "edges",
+        data: {
+          id: `drill|${patient.fhirId}|reveal`,
+          source: nodeId,
+          target: conceptEl.id(),
+          relType: "HAS_CONDITION",
+          label: "HAS_CONDITION",
+        },
+        classes: "concept-drill-active",
+      });
+    }
+
+    el = cy.getElementById(nodeId);
+  }
+
+  if (!el.length) return null;
+
+  applyDrilldownPatientPick(cy, el);
+
+  cy.animate(
+    {
+      center: { eles: el },
+      zoom: Math.min(cy.maxZoom(), Math.max(cy.zoom(), 0.9)),
+    },
+    { duration: 300 }
+  );
+  return el;
+}
+
+const MAX_DRILLDOWN_GRAPH_PATIENTS = 48;
+const MAX_WITHOUT_ON_GRAPH = 16;
 
 /** Fit expanded neighborhood, then zoom in so connected nodes are easier to read. */
 function focusExpandedNeighborhood(cy, node, { zoomFactor = 2, padding = 72 } = {}) {
@@ -172,6 +285,7 @@ export default function GraphCanvas({
   onExpandNotice,
   onExpandAllActivityChange,
   onZoomChange,
+  onConceptDrilldown,
   theme = "dark",
 }) {
   const containerRef = useRef(null);
@@ -191,9 +305,11 @@ export default function GraphCanvas({
   const onExpandNoticeRef = useRef(onExpandNotice);
   const onExpandAllActivityChangeRef = useRef(onExpandAllActivityChange);
   const onZoomChangeRef = useRef(onZoomChange);
+  const onConceptDrilldownRef = useRef(onConceptDrilldown);
   onExpandNoticeRef.current = onExpandNotice;
   onExpandAllActivityChangeRef.current = onExpandAllActivityChange;
   onZoomChangeRef.current = onZoomChange;
+  onConceptDrilldownRef.current = onConceptDrilldown;
   layoutModeRef.current = layoutMode;
   onNodeSelectRef.current = onNodeSelect;
   onCyReadyRef.current = onCyReady;
@@ -442,8 +558,247 @@ export default function GraphCanvas({
     });
   }, []);
 
+  const loadConceptDrilldown = useCallback((cy, drilldown) => {
+    if (!cy || cy.destroyed() || !drilldown) return;
+
+    cy.elements().remove();
+    expandingRef.current.clear();
+    setTooltip(null);
+
+    const conceptNode = (drilldown.graphNodes ?? []).find((node) => node.meta?.drilldownCenter);
+    const allPatientNodes = (drilldown.graphNodes ?? []).filter((node) => node.meta?.drilldownPatient);
+    const edges = drilldown.graphEdges ?? [];
+    const centerPos = { x: 0, y: 0 };
+
+    const withPatients = allPatientNodes.filter((node) => node.meta?.hasCondition === true);
+    const withoutPatients = allPatientNodes.filter((node) => node.meta?.hasCondition !== true);
+
+    let graphWith = withPatients;
+    let graphWithout = withoutPatients;
+    let omittedWith = 0;
+    let omittedWithout = 0;
+
+    if (allPatientNodes.length > MAX_DRILLDOWN_GRAPH_PATIENTS) {
+      if (withoutPatients.length > MAX_WITHOUT_ON_GRAPH) {
+        graphWithout = [];
+        omittedWithout = withoutPatients.length;
+        const withBudget = MAX_DRILLDOWN_GRAPH_PATIENTS - (omittedWithout > 0 ? 1 : 0);
+        if (withPatients.length > withBudget) {
+          graphWith = withPatients.slice(0, withBudget);
+          omittedWith = withPatients.length - graphWith.length;
+        }
+      } else {
+        graphWithout = withoutPatients;
+        const summarySlots = (withPatients.length > MAX_DRILLDOWN_GRAPH_PATIENTS - graphWithout.length ? 1 : 0);
+        const withBudget = MAX_DRILLDOWN_GRAPH_PATIENTS - graphWithout.length - summarySlots;
+        if (withPatients.length > withBudget) {
+          graphWith = withPatients.slice(0, withBudget);
+          omittedWith = withPatients.length - graphWith.length;
+        }
+      }
+    }
+
+    const { with: withPositions, without: withoutPositions } = computeDrilldownPositions(
+      centerPos,
+      graphWith.length,
+      graphWithout.length
+    );
+
+    cy.batch(() => {
+      if (conceptNode) {
+        const data = ensureShortLabel(conceptNode);
+        data.nodeSize = 88;
+        cy.add({
+          group: "nodes",
+          data,
+          position: centerPos,
+          classes: "show-label concept-drill-center analytics-node",
+        });
+      }
+
+      graphWith.forEach((node, index) => {
+        const data = ensureShortLabel(node);
+        data.nodeSize = 58;
+        const classes = ["show-label", "analytics-node", "concept-drill-with"];
+        if (data.expandable) classes.push("expandable");
+
+        cy.add({
+          group: "nodes",
+          data,
+          position: withPositions[index] ?? { x: 140, y: 0 },
+          classes: classes.join(" "),
+        });
+      });
+
+      graphWithout.forEach((node, index) => {
+        const data = ensureShortLabel(node);
+        data.nodeSize = 50;
+        const classes = ["show-label", "analytics-node", "concept-drill-without"];
+        if (data.expandable) classes.push("expandable");
+
+        cy.add({
+          group: "nodes",
+          data,
+          position: withoutPositions[index] ?? { x: 200, y: 80 },
+          classes: classes.join(" "),
+        });
+      });
+
+      const summaryY = Math.max(160 * 1.25, (withPositions.at(-1)?.y ?? 0) + 90 * 1.25);
+      if (omittedWithout > 0) {
+        cy.add({
+          group: "nodes",
+          data: ensureShortLabel({
+            id: "ui:drilldown-summary|without",
+            type: "PatientGroup",
+            label: `+${omittedWithout.toLocaleString()} without`,
+            shortLabel: `+${omittedWithout.toLocaleString()}`,
+            fullLabel: `${omittedWithout.toLocaleString()} patients without this condition\n(use panel list to browse)`,
+            expandable: false,
+            meta: { drilldownSummary: true, omittedWithout },
+          }),
+          position: { x: 0, y: summaryY },
+          classes: "show-label concept-drill-summary analytics-node",
+        });
+      }
+      if (omittedWith > 0) {
+        cy.add({
+          group: "nodes",
+          data: ensureShortLabel({
+            id: "ui:drilldown-summary|with",
+            type: "PatientGroup",
+            label: `+${omittedWith.toLocaleString()} more with`,
+            shortLabel: `+${omittedWith.toLocaleString()}`,
+            fullLabel: `${omittedWith.toLocaleString()} more patients with this condition\n(use panel list to browse)`,
+            expandable: false,
+            meta: { drilldownSummary: true, omittedWith },
+          }),
+          position: { x: 0, y: -summaryY },
+          classes: "show-label concept-drill-summary analytics-node",
+        });
+      }
+
+      const visibleIds = new Set([
+        ...graphWith.map((n) => n.id),
+        ...graphWithout.map((n) => n.id),
+      ]);
+      edges.forEach((edge) => {
+        if (!visibleIds.has(edge.source)) return;
+        cy.add({
+          group: "edges",
+          data: {
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            relType: edge.relType,
+            label: edge.relType,
+          },
+          classes: "concept-drill-active",
+        });
+      });
+
+      if (conceptNode && omittedWithout > 0) {
+        cy.add({
+          group: "edges",
+          data: {
+            id: `drill|summary-without|${conceptNode.id}`,
+            source: conceptNode.id,
+            target: "ui:drilldown-summary|without",
+            relType: "COHORT_WITHOUT",
+            label: "without",
+          },
+          classes: "concept-drill-summary-edge",
+        });
+      }
+    });
+
+    const conceptEl = conceptNode ? cy.getElementById(conceptNode.id) : null;
+    if (conceptEl?.length) {
+      conceptEl.select();
+      highlightNeighborhood(cy, conceptEl, { dimOthers: false });
+      cy.nodes(".concept-drill-without").addClass("dimmed");
+      cy.nodes(".concept-drill-with").removeClass("dimmed");
+    }
+
+    reportStats(cy);
+    focusDrilldownGraph(cy, conceptEl);
+  }, [reportStats]);
+
+  const loadAnalyticsGraph = useCallback((cy, analytics, mode) => {
+    if (!cy || cy.destroyed() || !analytics) return;
+
+    cy.elements().remove();
+    expandingRef.current.clear();
+    setTooltip(null);
+
+    const nodes = analytics.graphNodes ?? [];
+    const edges = analytics.graphEdges ?? [];
+    const positions = computeChildPositions({ x: 0, y: 0 }, Math.max(nodes.length, 1), {
+      baseRadius: Math.max(180, nodes.length * 10),
+      ringStep: 130,
+      maxPerRing: 14,
+    });
+
+    cy.batch(() => {
+      nodes.forEach((node, index) => {
+        const data = ensureShortLabel(node);
+        const meta = data.meta ?? {};
+        const classes = ["show-label", "analytics-node"];
+
+        if (mode === "comorbidity") {
+          classes.push("analytics-concept");
+          data.communityColor = communityColor(meta.communityId);
+          data.nodeSize = Math.max(52, Math.min(110, 42 + Math.sqrt(meta.patientCount || 1) * 7));
+          if (meta.isBridge) classes.push("analytics-bridge");
+        } else if (mode === "similar") {
+          classes.push("analytics-similar");
+          data.nodeSize = meta.anchor ? 72 : 58;
+          if (meta.anchor) classes.push("analytics-anchor");
+          if (data.expandable) classes.push("expandable");
+        }
+
+        cy.add({
+          group: "nodes",
+          data,
+          position: positions[index] ?? { x: 0, y: 0 },
+          classes: classes.join(" "),
+        });
+      });
+
+      edges.forEach((edge) => {
+        cy.add({
+          group: "edges",
+          data: {
+            id: edge.id,
+            source: edge.source,
+            target: edge.target,
+            relType: edge.relType,
+            label: edge.label,
+            edgeWidth: Math.max(1.5, Math.min(8, Math.sqrt(edge.weight || 1) * 0.65)),
+          },
+        });
+      });
+    });
+
+    reportStats(cy);
+    onLoadingChangeRef.current?.(true);
+    runLayout(cy, layoutModeRef.current, null)
+      .then(() => deferFit(cy, 80))
+      .finally(() => onLoadingChangeRef.current?.(false));
+  }, [reportStats]);
+
   const loadRootNode = useCallback(async (cy, nodeSpec) => {
     if (!cy || cy.destroyed() || !nodeSpec) return;
+
+    if (nodeSpec.graphMode === "comorbidity-drilldown") {
+      loadConceptDrilldown(cy, nodeSpec.analytics);
+      return;
+    }
+
+    if (nodeSpec.graphMode === "comorbidity" || nodeSpec.graphMode === "similar") {
+      loadAnalyticsGraph(cy, nodeSpec.analytics, nodeSpec.graphMode);
+      return;
+    }
 
     cy.elements().remove();
     expandingRef.current.clear();
@@ -526,7 +881,7 @@ export default function GraphCanvas({
 
     reportStats(cy);
     deferFit(cy, 80);
-  }, [addChildNodes, reportStats]);
+  }, [addChildNodes, reportStats, loadAnalyticsGraph, loadConceptDrilldown]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -541,14 +896,27 @@ export default function GraphCanvas({
       cy,
       expandNode: (node) => handleExpandRef.current?.(node),
       collapseNode: (node) => handleCollapseRef.current?.(node),
+      loadConceptDrilldown: (drilldown) => {
+        const cy = cyRef.current;
+        if (!cy || cy.destroyed()) return;
+        loadConceptDrilldown(cy, drilldown);
+      },
       focusNode: (node) => {
         if (!node || node.empty()) return;
-        cy.elements().removeClass("dimmed highlighted");
+        if (node.hasClass("concept-drill-with") || node.hasClass("concept-drill-without")) {
+          applyDrilldownPatientPick(cy, node);
+          onNodeSelectRef.current?.(node.data());
+          cy.animate({ center: { eles: node }, zoom: Math.min(cy.maxZoom(), Math.max(cy.zoom(), 0.9)) }, { duration: 300 });
+          return;
+        }
+        cy.elements().removeClass("dimmed highlighted concept-drill-picked");
         highlightNeighborhood(cy, node, { dimOthers: true });
         node.select();
         onNodeSelectRef.current?.(node.data());
         cy.animate({ center: { eles: node }, zoom: Math.min(cy.maxZoom(), Math.max(cy.zoom(), 1.1)) }, { duration: 300 });
       },
+      focusDrilldownPatient: (patient, conceptNodeId) =>
+        focusDrilldownPatientNode(cy, patient, conceptNodeId),
       dismissNode: (node) => {
         if (!node || node.empty()) return;
         node.remove();
@@ -559,8 +927,34 @@ export default function GraphCanvas({
 
     cy.on("tap", "node", (evt) => {
       const node = evt.target;
+      const data = node.data();
+      if (node.hasClass("analytics-concept") && onConceptDrilldownRef.current) {
+        const ctx = data.context ?? {};
+        if (ctx.conceptSystem && ctx.conceptCode) {
+          onConceptDrilldownRef.current({
+            id: data.id,
+            system: ctx.conceptSystem,
+            code: ctx.conceptCode,
+            label: data.fullLabel?.split("\n")[0] || data.label,
+            patientCount: data.meta?.patientCount,
+            prevalence: data.meta?.prevalence,
+            communityId: data.meta?.communityId,
+          });
+          return;
+        }
+      }
       onNodeSelectRef.current?.(nodeSelectionPayload(node));
+      if (node.hasClass("concept-drill-with") || node.hasClass("concept-drill-without")) {
+        applyDrilldownPatientPick(cy, node);
+        reportStats(cy);
+        return;
+      }
       highlightNeighborhood(cy, node, { dimOthers: true });
+      if (node.hasClass("concept-drill-without")) {
+        cy.nodes().removeClass("dimmed highlighted");
+        cy.edges().removeClass("highlighted");
+        node.addClass("dimmed");
+      }
       reportStats(cy);
     });
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { checkHealth, searchCohort } from "@/api/api";
+import { analyzeComorbidity, checkHealth, findSimilarPatients, getConceptCohortPatients, searchCohort } from "@/api/api";
+import ClinicalIntelligencePanel from "@/components/ClinicalIntelligencePanel";
 import CohortPanel from "@/components/CohortPanel";
 import GraphCanvas from "@/components/GraphCanvas/GraphCanvas";
 import GraphFloatingControls from "@/components/GraphFloatingControls";
@@ -48,6 +49,15 @@ export default function App() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [patientExpandLimit, setPatientExpandLimit] = useState(50);
   const [graphNotice, setGraphNotice] = useState(null);
+  const [intelligenceMode, setIntelligenceMode] = useState(null);
+  const [intelligenceLoading, setIntelligenceLoading] = useState(false);
+  const [intelligenceError, setIntelligenceError] = useState(null);
+  const [comorbidityResult, setComorbidityResult] = useState(null);
+  const [similarResult, setSimilarResult] = useState(null);
+  const [conceptDrilldown, setConceptDrilldown] = useState(null);
+  const [selectedConcept, setSelectedConcept] = useState(null);
+  const [intelligencePanelMinimized, setIntelligencePanelMinimized] = useState(false);
+  const [cohortGraphSnapshot, setCohortGraphSnapshot] = useState(null);
   const cyRef = useRef(null);
   const graphApiRef = useRef(null);
   const resultsTopRef = useRef(null);
@@ -86,10 +96,150 @@ export default function App() {
     if (!spec) return;
     setSelectedNode(null);
     setInspectorNode(null);
+    setIntelligenceMode(null);
+    setComorbidityResult(null);
+    setSimilarResult(null);
+    setConceptDrilldown(null);
+    setSelectedConcept(null);
+    setIntelligenceError(null);
+    setCohortGraphSnapshot(null);
     setRootNode(spec);
     setView("graph");
     setFitTrigger((n) => n + 1);
   }, []);
+
+  const resolveCohortFilters = useCallback(() => {
+    const filters = cohortResult?.graphContext?.filters ?? rootNode?.context?.filters ?? {};
+    if (cohortResult?.concept) {
+      return {
+        ...filters,
+        conceptSystem: cohortResult.concept.conceptSystem ?? filters.conceptSystem,
+        conceptCode: cohortResult.concept.conceptCode ?? filters.conceptCode,
+        conceptLabel: cohortResult.concept.label ?? filters.conceptLabel,
+        condition: filters.condition ?? cohortResult.concept.label,
+      };
+    }
+    return filters;
+  }, [cohortResult, rootNode]);
+
+  const handleAnalyzeComorbidity = useCallback(async () => {
+    setIntelligenceLoading(true);
+    setIntelligenceError(null);
+    try {
+      const filters = resolveCohortFilters();
+      const data = await analyzeComorbidity(filters);
+      if (!data?.patientCount) {
+        setIntelligenceError("No patients with conditions matched this cohort.");
+        setIntelligenceMode("comorbidity");
+        setComorbidityResult(data);
+        return;
+      }
+      setComorbidityResult(data);
+      setSimilarResult(null);
+      setIntelligenceMode("comorbidity");
+      if (rootNode && rootNode.graphMode !== "comorbidity" && rootNode.graphMode !== "similar") {
+        setCohortGraphSnapshot(rootNode);
+      }
+      setRootNode({
+        graphMode: "comorbidity",
+        label: data.interpretation,
+        analytics: data,
+        context: { filters },
+      });
+      setView("graph");
+      setFitTrigger((n) => n + 1);
+    } catch (err) {
+      setIntelligenceError(err instanceof Error ? err.message : "Comorbidity analysis failed");
+      setIntelligenceMode("comorbidity");
+    } finally {
+      setIntelligenceLoading(false);
+    }
+  }, [resolveCohortFilters, rootNode]);
+
+  const handleFindSimilarPatients = useCallback(async () => {
+    const patientFhirId = selectedNode?.context?.patientFhirId;
+    if (!patientFhirId) return;
+
+    setIntelligenceLoading(true);
+    setIntelligenceError(null);
+    try {
+      const filters = resolveCohortFilters();
+      const data = await findSimilarPatients(patientFhirId, filters, 10);
+      setSimilarResult(data);
+      setComorbidityResult(null);
+      setIntelligenceMode("similar");
+      if (rootNode && rootNode.graphMode !== "comorbidity" && rootNode.graphMode !== "similar") {
+        setCohortGraphSnapshot(rootNode);
+      }
+      setRootNode({
+        graphMode: "similar",
+        label: `Similar patients · ${data.anchorPatient?.label ?? "Patient"}`,
+        analytics: data,
+        context: { filters, anchorPatientFhirId: patientFhirId },
+      });
+      setView("graph");
+      setFitTrigger((n) => n + 1);
+    } catch (err) {
+      setIntelligenceError(err instanceof Error ? err.message : "Similar patient search failed");
+      setIntelligenceMode("similar");
+    } finally {
+      setIntelligenceLoading(false);
+    }
+  }, [resolveCohortFilters, rootNode, selectedNode]);
+
+  const handleConceptDrilldown = useCallback(async (concept) => {
+    if (!concept?.system || !concept?.code) return;
+    setIntelligenceLoading(true);
+    setIntelligenceError(null);
+    setSelectedConcept(concept);
+    try {
+      const filters = resolveCohortFilters();
+      const drilldown = await getConceptCohortPatients(filters, concept);
+      setConceptDrilldown(drilldown);
+      setRootNode({
+        graphMode: "comorbidity-drilldown",
+        label: drilldown.summary,
+        analytics: drilldown,
+        context: { filters },
+      });
+      setView("graph");
+      setFitTrigger((n) => n + 1);
+    } catch (err) {
+      setIntelligenceError(err instanceof Error ? err.message : "Could not load patients for this condition");
+    } finally {
+      setIntelligenceLoading(false);
+    }
+  }, [resolveCohortFilters]);
+
+  const handleBackToComorbidityNetwork = useCallback(() => {
+    if (!comorbidityResult) return;
+    setConceptDrilldown(null);
+    setSelectedConcept(null);
+    setRootNode({
+      graphMode: "comorbidity",
+      label: comorbidityResult.interpretation,
+      analytics: comorbidityResult,
+      context: { filters: resolveCohortFilters() },
+    });
+    setFitTrigger((n) => n + 1);
+  }, [comorbidityResult, resolveCohortFilters]);
+
+  const handleBackToCohortGraph = useCallback(() => {
+    if (cohortGraphSnapshot) {
+      setRootNode(cohortGraphSnapshot);
+      setIntelligenceMode(null);
+      setComorbidityResult(null);
+      setSimilarResult(null);
+      setConceptDrilldown(null);
+      setSelectedConcept(null);
+      setIntelligenceError(null);
+      setFitTrigger((n) => n + 1);
+      return;
+    }
+    if (cohortResult) {
+      handleVisualize(cohortResult);
+    }
+  }, [cohortGraphSnapshot, cohortResult, handleVisualize]);
 
   const handleCyReady = useCallback((api) => {
     graphApiRef.current = api;
@@ -171,6 +321,13 @@ export default function App() {
     setRootNode(null);
     setSelectedNode(null);
     setInspectorNode(null);
+    setIntelligenceMode(null);
+    setComorbidityResult(null);
+    setSimilarResult(null);
+    setConceptDrilldown(null);
+    setSelectedConcept(null);
+    setIntelligenceError(null);
+    setCohortGraphSnapshot(null);
     setStats({ nodes: 0, edges: 0, visibleNodes: 0, byType: {} });
   }, []);
 
@@ -272,6 +429,18 @@ export default function App() {
             {cohortResult?.queryType === "aggregation" && view === "cohort" && (
               <span className="top-bar-meta">Aggregation result</span>
             )}
+            {view === "graph" && cohortResult && canVisualizeCohort(cohortResult) && (
+              <button
+                type="button"
+                className="btn-secondary top-bar-intelligence-btn"
+                onClick={handleAnalyzeComorbidity}
+                disabled={intelligenceLoading}
+              >
+                {intelligenceLoading && intelligenceMode === "comorbidity"
+                  ? "Analyzing…"
+                  : "Comorbidity Intelligence"}
+              </button>
+            )}
           </header>
 
           <div className={`cohort-view${view !== "cohort" ? " view-hidden" : ""}`}>
@@ -366,6 +535,7 @@ export default function App() {
                   setGraphNotice(message);
                   window.setTimeout(() => setGraphNotice(null), 8000);
                 }}
+                onConceptDrilldown={handleConceptDrilldown}
               />
 
               <GraphLeftToolbar
@@ -409,6 +579,7 @@ export default function App() {
                 loading={loading}
                 onExpand={handleExpandSelected}
                 onCollapse={handleCollapseSelected}
+                onSimilarPatients={handleFindSimilarPatients}
                 onExplore={() => {
                   if (selectedNode) setInspectorNode(selectedNode);
                 }}
@@ -473,6 +644,67 @@ export default function App() {
                   onRevealNode={handleRevealNode}
                   onDismissNode={handleDismissNode}
                   onCollapseNode={handleCollapseSelected}
+                />
+              )}
+
+              {(intelligenceMode || intelligenceLoading) && (
+                <ClinicalIntelligencePanel
+                  mode={intelligenceMode}
+                  comorbidity={comorbidityResult}
+                  similar={similarResult}
+                  conceptDrilldown={conceptDrilldown}
+                  selectedConcept={selectedConcept}
+                  selectedPatientFhirId={selectedNode?.context?.patientFhirId ?? null}
+                  loading={intelligenceLoading}
+                  error={intelligenceError}
+                  onClose={() => {
+                    setIntelligenceMode(null);
+                    setIntelligenceError(null);
+                    setIntelligencePanelMinimized(false);
+                  }}
+                  minimized={intelligencePanelMinimized}
+                  onToggleMinimize={() => setIntelligencePanelMinimized((m) => !m)}
+                  onSelectConcept={handleConceptDrilldown}
+                  onBackToNetwork={
+                    comorbidityResult && conceptDrilldown ? handleBackToComorbidityNetwork : null
+                  }
+                  onSelectPatient={(patient) => {
+                    const nodeId = `ui:patient|${patient.fhirId}`;
+                    if (conceptDrilldown) {
+                      const el = graphApiRef.current?.focusDrilldownPatient?.(
+                        { ...patient, hasCondition: conceptDrilldown.withPatients?.some((p) => p.fhirId === patient.fhirId) },
+                        conceptDrilldown.concept?.id
+                      );
+                      if (el?.length) {
+                        setSelectedNode({
+                          id: nodeId,
+                          type: "Patient",
+                          label: patient.label,
+                          expandable: true,
+                          context: { patientFhirId: patient.fhirId },
+                          meta: patient,
+                        });
+                        setView("graph");
+                        return;
+                      }
+                    }
+                    const cy = graphApiRef.current?.cy ?? cyRef.current;
+                    const el = cy?.getElementById(nodeId);
+                    if (el?.length) {
+                      graphApiRef.current?.focusNode?.(el);
+                      setSelectedNode({
+                        id: nodeId,
+                        type: "Patient",
+                        label: patient.label,
+                        expandable: true,
+                        context: { patientFhirId: patient.fhirId },
+                        meta: patient,
+                      });
+                    }
+                  }}
+                  onBackToCohort={
+                    cohortGraphSnapshot || cohortResult ? handleBackToCohortGraph : null
+                  }
                 />
               )}
             </div>

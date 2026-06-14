@@ -175,6 +175,154 @@ export function getCytoscapeStyles(theme = "dark") {
       selector: ".highlighted",
       style: { opacity: 1, "z-index": 100 },
     },
+    {
+      selector: "node.analytics-concept",
+      style: {
+        width: "data(nodeSize)",
+        height: "data(nodeSize)",
+        "background-color": "data(communityColor)",
+        "font-size": 9,
+        "text-max-width": 72,
+      },
+    },
+    {
+      selector: "node.analytics-bridge",
+      style: {
+        "border-width": 3,
+        "border-color": "#f59e0b",
+      },
+    },
+    {
+      selector: "node.analytics-anchor",
+      style: {
+        width: "data(nodeSize)",
+        height: "data(nodeSize)",
+        "border-width": 3,
+        "border-color": "#d946a8",
+      },
+    },
+    {
+      selector: "node.analytics-similar",
+      style: {
+        width: "data(nodeSize)",
+        height: "data(nodeSize)",
+      },
+    },
+    {
+      selector: "edge[relType = 'CO_OCCURS']",
+      style: {
+        width: "data(edgeWidth)",
+        label: "data(label)",
+        "font-size": 7,
+        opacity: 0.75,
+      },
+    },
+    {
+      selector: "edge[relType = 'SIMILAR_TO']",
+      style: {
+        width: 2,
+        label: "data(label)",
+        "line-style": "dashed",
+        "font-size": 7,
+        opacity: 0.85,
+      },
+    },
+    {
+      selector: "node.concept-drill-center",
+      style: {
+        width: 88,
+        height: 88,
+        "font-size": 10,
+        "text-max-width": 78,
+        "border-width": 1.26,
+        "border-color": "#d946a8",
+      },
+    },
+    {
+      selector: "node.concept-drill-with",
+      style: {
+        width: 62,
+        height: 62,
+        opacity: 1,
+        "border-width": 1.26,
+        "border-color": "#059669",
+      },
+    },
+    {
+      selector: "node.concept-drill-with.expandable, node.concept-drill-without.expandable",
+      style: {
+        "overlay-opacity": 0,
+      },
+    },
+    {
+      selector: "node.concept-drill-with.concept-drill-picked",
+      style: {
+        width: 68,
+        height: 68,
+        "border-width": 2,
+        "border-color": "#047857",
+        "z-index": 999,
+        "overlay-color": "#059669",
+        "overlay-opacity": 0.32,
+        "overlay-padding": 8,
+      },
+    },
+    {
+      selector: "node.concept-drill-without.concept-drill-picked",
+      style: {
+        width: 58,
+        height: 58,
+        opacity: 1,
+        "border-width": 2,
+        "border-color": "#64748b",
+        "z-index": 999,
+        "overlay-color": "#94a3b8",
+        "overlay-opacity": 0.28,
+        "overlay-padding": 8,
+      },
+    },
+    {
+      selector: "node.concept-drill-without",
+      style: {
+        width: 54,
+        height: 54,
+        opacity: 0.28,
+      },
+    },
+    {
+      selector: "edge.concept-drill-active",
+      style: {
+        width: 1.2,
+        "line-color": t.edgeColor,
+        "target-arrow-color": t.arrowColor,
+        color: t.edgeLabelColor,
+        opacity: theme === "light" ? 0.55 : 0.45,
+      },
+    },
+    {
+      selector: "node.concept-drill-summary",
+      style: {
+        width: 72,
+        height: 72,
+        "font-size": 9,
+        "text-max-width": 68,
+        "border-width": 0.84,
+        "border-color": "#94a3b8",
+        "border-style": "dashed",
+        opacity: 0.75,
+        "background-color": "#f1f5f9",
+      },
+    },
+    {
+      selector: "edge.concept-drill-summary-edge",
+      style: {
+        width: 1.5,
+        "line-color": "#94a3b8",
+        "line-style": "dashed",
+        "target-arrow-color": "#94a3b8",
+        opacity: 0.5,
+      },
+    },
   ];
 }
 

@@ -125,6 +125,41 @@ export function computeChildPositions(parentPos, count, options = {}) {
   return positions;
 }
 
+/** Compact layout for condition drill-down — sublinear radius, capped spread. */
+export function computeDrilldownPositions(centerPos, withCount, withoutCount) {
+  const spread = 1.25;
+
+  const withPositions =
+    withCount > 0
+      ? computeChildPositions(centerPos, withCount, {
+          baseRadius: Math.min(175 * spread, Math.max(105 * spread, (40 + Math.sqrt(withCount) * 14) * spread)),
+          ringStep: 72 * spread,
+          maxPerRing: Math.min(20, Math.max(10, Math.ceil(withCount / 2.5))),
+        })
+      : [];
+
+  let withoutPositions = [];
+  if (withoutCount > 0) {
+    const innerRadius =
+      withPositions.length > 0
+        ? Math.max(
+            ...withPositions.map((p) => Math.hypot(p.x - centerPos.x, p.y - centerPos.y))
+          )
+        : 0;
+    const outerBase = Math.min(
+      300 * spread,
+      Math.max(innerRadius + 90 * spread, (95 + Math.sqrt(withCount + withoutCount) * 12) * spread)
+    );
+    withoutPositions = computeChildPositions(centerPos, withoutCount, {
+      baseRadius: outerBase,
+      ringStep: 68 * spread,
+      maxPerRing: Math.min(18, Math.max(10, Math.ceil(withoutCount / 2))),
+    });
+  }
+
+  return { with: withPositions, without: withoutPositions };
+}
+
 export { getNodeTypeColor } from "./nodeColors";
 
 const LABEL_LIMITS = {

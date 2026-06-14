@@ -8,11 +8,14 @@ export default function GraphStatusBar({
   onExplore,
   onExpand,
   onCollapse,
+  onSimilarPatients,
 }) {
   const typeColor = selectedNode ? getNodeTypeColor(selectedNode.type) : null;
   const shortLabel = selectedNode?.label?.split("\n")[0] ?? selectedNode?.label;
   const canExpand = selectedNode?.expandable && !selectedNode?.expanded;
   const canCollapse = !!selectedNode?.expanded;
+  const canFindSimilar =
+    selectedNode?.type === "Patient" && !!selectedNode?.context?.patientFhirId;
 
   return (
     <div className="bloom-status-bar">
@@ -54,6 +57,16 @@ export default function GraphStatusBar({
               title="Hide connected nodes (or right-click the node)"
             >
               Collapse
+            </button>
+          )}
+          {canFindSimilar && (
+            <button
+              type="button"
+              className="bloom-similar-btn"
+              onClick={onSimilarPatients}
+              title="Find patients with similar conditions"
+            >
+              Similar patients
             </button>
           )}
           <button

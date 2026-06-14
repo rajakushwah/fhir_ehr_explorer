@@ -3,10 +3,13 @@ import logging
 from fastapi import APIRouter, HTTPException
 
 from app.schemas.graph import (
+    ComorbidityRequest,
+    ConceptPatientsRequest,
     ExpandRequest,
     NodeDetailRequest,
     NodeNeighborsRequest,
     NodeRelationshipsRequest,
+    SimilarPatientsRequest,
 )
 from app.services.node_detail_service import (
     get_node_detail,
@@ -32,6 +35,11 @@ from app.services.expand_service import (
     build_region_filters,
 )
 from app.services.graph_connectivity import build_place_patients, build_shared_concept_patients
+from app.services.graph_analytics import (
+    analyze_comorbidity,
+    find_similar_patients,
+    get_concept_cohort_patients,
+)
 from app.utils.neo4j_errors import handle_db_error
 from app.utils.timing import timed_step
 
@@ -188,3 +196,47 @@ def node_relationships(req: NodeRelationshipsRequest):
             return {"relationships": items, "total": len(items)}
         except Exception as exc:
             handle_db_error(f"graph/node/relationships/{req.nodeType}", exc)
+
+
+@router.post("/analytics/comorbidity")
+def comorbidity_analysis(req: ComorbidityRequest):
+    with timed_step(logger, "graph/analytics/comorbidity"):
+        try:
+            return analyze_comorbidity(
+                dict(req.filters),
+                min_co_occurrence=req.minCoOccurrence,
+                max_concepts=req.maxConcepts,
+            )
+        except Exception as exc:
+            handle_db_error("graph/analytics/comorbidity", exc)
+
+
+@router.post("/analytics/similar-patients")
+def similar_patients(req: SimilarPatientsRequest):
+    with timed_step(logger, "graph/analytics/similar-patients", patient=req.patientFhirId):
+        try:
+            return find_similar_patients(
+                req.patientFhirId,
+                dict(req.filters),
+                limit=req.limit,
+            )
+        except Exception as exc:
+            handle_db_error("graph/analytics/similar-patients", exc)
+
+
+@router.post("/analytics/concept-patients")
+def concept_cohort_patients(req: ConceptPatientsRequest):
+    with timed_step(
+        logger,
+        "graph/analytics/concept-patients",
+        code=req.conceptCode,
+    ):
+        try:
+            return get_concept_cohort_patients(
+                dict(req.filters),
+                req.conceptSystem,
+                req.conceptCode,
+                concept_label=req.conceptLabel,
+            )
+        except Exception as exc:
+            handle_db_error("graph/analytics/concept-patients", exc)

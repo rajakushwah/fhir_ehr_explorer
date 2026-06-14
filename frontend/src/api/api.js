@@ -111,6 +111,39 @@ export async function searchCohort(payload) {
   return request("/cohort/search", payload, "cohort/search");
 }
 
+export async function analyzeComorbidity(filters, options = {}) {
+  return request(
+    "/graph/analytics/comorbidity",
+    {
+      filters,
+      minCoOccurrence: options.minCoOccurrence ?? 2,
+      maxConcepts: options.maxConcepts ?? 40,
+    },
+    "analytics/comorbidity"
+  );
+}
+
+export async function findSimilarPatients(patientFhirId, filters = {}, limit = 10) {
+  return request(
+    "/graph/analytics/similar-patients",
+    { patientFhirId, filters, limit },
+    "analytics/similar-patients"
+  );
+}
+
+export async function getConceptCohortPatients(filters, concept) {
+  return request(
+    "/graph/analytics/concept-patients",
+    {
+      filters,
+      conceptSystem: concept.system,
+      conceptCode: concept.code,
+      conceptLabel: concept.label,
+    },
+    "analytics/concept-patients"
+  );
+}
+
 export async function getCohortFilters() {
   const t0 = performance.now();
   try {
