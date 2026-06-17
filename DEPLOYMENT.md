@@ -58,6 +58,78 @@ Do **not** commit `.env` to Git.
 
 ---
 
+## Frontend ↔ backend integration (for DevOps)
+
+The UI talks to the API over HTTP. **Integration is mostly automatic** — you do not mirror backend secrets in the frontend.
+
+### How the browser calls the API
+
+| API paths (from UI) | Backend handler |
+|---------------------|-----------------|
+| `GET /health` | Health + Neo4j status |
+| `GET /cohort/filters` | Filter options |
+| `POST /cohort/search` | Cohort search |
+| `POST /search` | Concept search |
+| `POST /graph/*` | Graph expand + analytics |
+
+Frontend code: `frontend/src/api/api.js` → `fetch(\`${BASE_URL}${path}\`)`  
+`BASE_URL` = `VITE_API_URL` if set, otherwise **empty** (same origin).
+
+### Two deployment patterns
+
+**Pattern A — Same host (recommended, no frontend env file)**
+
+```
+https://ehr.company.com/
+    ├── /              → React UI (frontend/dist)
+    ├── /assets/*      → JS/CSS
+    ├── /health        → FastAPI
+    ├── /cohort/*      → FastAPI
+    ├── /search        → FastAPI
+    └── /graph/*       → FastAPI
+```
+
+- **Backend `.env`:** required (Neo4j credentials)
+- **Frontend `.env`:** not needed
+- **Build:** `cd frontend && npm ci && npm run build`
+- **Run:** `uvicorn app.main:app --port 8002` (serves UI + API)
+
+**Pattern B — Split hosts (frontend env required at build time)**
+
+```
+https://app.company.com     → static UI (CDN/nginx)
+https://api.company.com     → FastAPI only
+```
+
+Create `frontend/.env.production`:
+
+```env
+VITE_API_URL=https://api.company.com
+```
+
+Then `npm run build`. Rebuild if API URL changes.
+
+### Development vs production
+
+| | Dev | Production |
+|---|-----|--------------|
+| UI | Vite `:5174` | Built static files |
+| API | Uvicorn `:8002` | Uvicorn `:8002` (or behind proxy) |
+| How UI finds API | Vite proxy in `vite.config.js` | Same origin (A) or `VITE_API_URL` (B) |
+| Frontend `.env` | Not required | Only for Pattern B |
+
+### Env files summary
+
+| File | Required? | Purpose |
+|------|-----------|---------|
+| `.env` (project root) | **Yes** | Neo4j, logging — backend only |
+| `frontend/.env.production` | Only Pattern B | `VITE_API_URL` at build time |
+| `frontend/.env.example` | Reference | Documents optional frontend vars |
+
+**Never put `NEO4J_*` or other secrets in frontend env** — the browser can read them.
+
+---
+
 ## Build & run
 
 ```bash
