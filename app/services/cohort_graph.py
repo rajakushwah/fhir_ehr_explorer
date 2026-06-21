@@ -36,6 +36,7 @@ def build_graph_context(
         "city": parsed.city,
         "country": parsed.country,
         "condition": parsed.condition,
+        "patientId": parsed.patient_id,
     }
     if concept:
         filters["conceptSystem"] = concept["system"]
@@ -74,6 +75,7 @@ def _params(filters: dict[str, Any], extra: Optional[dict[str, Any]] = None) -> 
         "state": filters.get("state"),
         "city": filters.get("city"),
         "country": filters.get("country"),
+        "patientId": filters.get("patientId"),
         "conceptSystem": filters.get("conceptSystem"),
         "conceptCode": filters.get("conceptCode"),
     }
@@ -265,9 +267,9 @@ def build_cohort_patients(context: dict[str, Any]) -> list[dict]:
             + _where_clause()
             + _drill_where_clause()
             + """
-            RETURN DISTINCT p.fhirId AS fhirId, p.name AS name, p.gender AS gender,
+            RETURN DISTINCT p.fhirId AS fhirId, p.patientId AS patientId, p.name AS name, p.gender AS gender,
                    p.state AS state, p.city AS city
-            ORDER BY p.fhirId
+            ORDER BY coalesce(p.patientId, 999999999), p.fhirId
             LIMIT $limit
             """,
             **_drill_params(filters, context, limit=limit),
@@ -277,6 +279,11 @@ def build_cohort_patients(context: dict[str, Any]) -> list[dict]:
         "id": f"ui:patient|{r['fhirId']}",
         "type": "Patient",
         "label": patient_graph_label(dict(r)),
+        "name": r.get("name"),
+        "patientId": r.get("patientId"),
+        "gender": r.get("gender"),
+        "city": r.get("city"),
+        "state": r.get("state"),
         "expandable": True,
         "context": {"patientFhirId": r["fhirId"]},
     }) for r in records]

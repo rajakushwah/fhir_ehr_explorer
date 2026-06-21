@@ -65,6 +65,7 @@ class ParsedCohort:
     city: Optional[str] = None
     country: Optional[str] = None
     gender: Optional[str] = None
+    patient_id: Optional[str] = None
     min_age: Optional[int] = None
     max_age: Optional[int] = None
 
@@ -240,6 +241,8 @@ def _format_location(parsed: ParsedCohort) -> Optional[str]:
 
 def build_interpretation(parsed: ParsedCohort) -> str:
     parts = ["Patients"]
+    if parsed.patient_id:
+        parts.append(f"with ID matching '{parsed.patient_id}'")
     if parsed.gender:
         parts.append(f"({parsed.gender})")
     location = _format_location(parsed)

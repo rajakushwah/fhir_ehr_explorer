@@ -1,36 +1,35 @@
-/** Soft classic pastel palette for graph nodes. */
+/** Soft graph palette — light fills, distinct per type. */
 
 export const NODE_TYPE_COLORS = {
-  AllergyIntolerance: "#F4D4CC",
-  Concept: "#DCE8C8",
-  Condition: "#F8E8C4",
-  DiagnosticReport: "#D4E4F7",
-  Encounter: "#F0DCE8",
-  Immunization: "#C8E8F0",
-  Location: "#F0E0EC",
-  MedicationRequest: "#F5D8E4",
-  Observation: "#C8E6EA",
-  Organization: "#E8DDD0",
-  Patient: "#E6D9C8",
-  Practitioner: "#D8E0F5",
-  Procedure: "#DCD8F5",
+  AllergyIntolerance: "#F4A5A5",
+  Concept: "#A8DDA8",
+  Condition: "#F5D078",
+  DiagnosticReport: "#8ED4E8",
+  Encounter: "#D4A8D4",
+  Immunization: "#8BB8F0",
+  Location: "#D4C4A8",
+  MedicationRequest: "#EBA8C4",
+  Observation: "#98CEDC",
+  Organization: "#B8BEC6",
+  Patient: "#F5B898",
+  Practitioner: "#88B8AC",
+  Procedure: "#98B8E8",
   // UI filter / hub nodes
-  PatientGroup: "#E4DCF5",
-  Gender: "#E0E8F5",
-  Region: "#D8E4F8",
-  ClinicalCategory: "#E0DCF8",
+  PatientGroup: "#C4B0E0",
+  Gender: "#92B8E8",
+  Region: "#98C8E8",
+  ClinicalCategory: "#C8B0D8",
 };
 
-/** Readable label text on light node fills */
-export const NODE_LABEL_COLOR = "#4A5F7A";
+/** Dark labels read well on light fills */
+export const NODE_LABEL_COLOR = "#3D5166";
 
-export const NODE_DEFAULT_COLOR = "#E4DCF5";
+export const NODE_DEFAULT_COLOR = "#B8BEC6";
 
 export function getNodeTypeColor(type) {
   return NODE_TYPE_COLORS[type] ?? NODE_DEFAULT_COLOR;
 }
 
 export function nodeBorderColor(type) {
-  const fill = getNodeTypeColor(type);
-  return `${fill}cc`;
+  return getNodeTypeColor(type);
 }

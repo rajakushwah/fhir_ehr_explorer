@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getCohortFilters } from "@/api/api";
 
 const EXAMPLE_QUERIES = [
@@ -12,6 +12,16 @@ const EXAMPLE_QUERIES = [
   "how many observations",
 ];
 
+function uniqueConditions(conditions = []) {
+  const seen = new Set();
+  return conditions.filter((c) => {
+    const key = (c.label || "").trim().toLowerCase();
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export default function CohortPanel({ onSearch, onVisualize, searching, lastResult }) {
   const [query, setQuery] = useState("");
   const [filters, setFilters] = useState({
@@ -22,6 +32,7 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
     conditions: [],
   });
   const [structured, setStructured] = useState({
+    patientId: "",
     condition: "",
     city: "",
     state: "",
@@ -30,6 +41,11 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
   });
   const [mode, setMode] = useState("ask");
   const [error, setError] = useState(null);
+
+  const conditionOptions = useMemo(
+    () => uniqueConditions(filters.conditions),
+    [filters.conditions]
+  );
 
   useEffect(() => {
     getCohortFilters()
@@ -53,6 +69,7 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
 
   const handleFilters = () => {
     runSearch({
+      patientId: structured.patientId.trim() || undefined,
       condition: structured.condition || undefined,
       city: structured.city || undefined,
       state: structured.state || undefined,
@@ -124,13 +141,22 @@ export default function CohortPanel({ onSearch, onVisualize, searching, lastResu
         </>
       ) : (
         <>
+          <label className="field-label">Patient ID</label>
+          <input
+            type="text"
+            className="query-input query-input-single"
+            value={structured.patientId}
+            onChange={(e) => setStructured((s) => ({ ...s, patientId: e.target.value }))}
+            placeholder="Short ID (e.g. 16101) or FHIR UUID"
+          />
+
           <label className="field-label">Condition</label>
           <select
             value={structured.condition}
             onChange={(e) => setStructured((s) => ({ ...s, condition: e.target.value }))}
           >
             <option value="">Any condition</option>
-            {filters.conditions?.slice(0, 30).map((c) => (
+            {conditionOptions.slice(0, 50).map((c) => (
               <option key={`${c.conceptSystem}|${c.conceptCode}`} value={c.label}>
                 {c.label}
               </option>

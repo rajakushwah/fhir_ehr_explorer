@@ -42,6 +42,7 @@ FOR (p:Practitioner) REQUIRE p.fhirId IS UNIQUE;
 
 CREATE INDEX patient_state IF NOT EXISTS FOR (p:Patient) ON (p.state);
 CREATE INDEX patient_gender IF NOT EXISTS FOR (p:Patient) ON (p.gender);
+CREATE INDEX patient_short_id IF NOT EXISTS FOR (p:Patient) ON (p.patientId);
 CREATE INDEX obs_effective IF NOT EXISTS FOR (o:Observation) ON (o.effectiveDateTime);
 CREATE INDEX condition_onset IF NOT EXISTS FOR (c:Condition) ON (c.onsetDateTime);
 

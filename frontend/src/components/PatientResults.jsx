@@ -15,6 +15,19 @@ function formatAggregationValue(metric, value) {
 
 import { canVisualizeCohort } from "@/utils/graphFromCohort";
 
+function patientDisplayName(patient) {
+  if (patient.name?.trim()) return patient.name.trim();
+  if (patient.patientId != null) return `Patient #${patient.patientId}`;
+  return "Patient";
+}
+
+function avatarGenderClass(gender) {
+  const value = (gender || "").toLowerCase();
+  if (value === "female") return " patient-avatar-female";
+  if (value === "male") return " patient-avatar-male";
+  return "";
+}
+
 export default function PatientResults({
   cohortResult,
   selectedId,
@@ -169,16 +182,27 @@ export default function PatientResults({
             disabled={loading}
           >
             <div className="patient-card-top">
-              <span className={`patient-avatar${p.isCritical ? " patient-avatar-critical" : ""}`}>
+              <span
+                className={`patient-avatar${avatarGenderClass(p.gender)}${
+                  p.isCritical ? " patient-avatar-critical" : ""
+                }`}
+              >
                 {(p.gender || "?")[0].toUpperCase()}
               </span>
-              <div>
-                <span className="patient-id">
-                  Patient
+              <div className="patient-card-heading">
+                <span className="patient-name">
+                  {patientDisplayName(p)}
                   {p.isCritical && <span className="critical-pill">Critical</span>}
                 </span>
                 <span className="patient-meta">
-                  {[p.gender, p.age != null ? `age ${p.age}` : null, p.city, p.state, p.country]
+                  {[
+                    p.patientId != null ? `#${p.patientId}` : null,
+                    p.gender,
+                    p.age != null ? `age ${p.age}` : null,
+                    p.city,
+                    p.state,
+                    p.country,
+                  ]
                     .filter(Boolean)
                     .join(" · ")}
                 </span>

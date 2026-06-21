@@ -11,7 +11,8 @@ export default function GraphStatusBar({
   onSimilarPatients,
 }) {
   const typeColor = selectedNode ? getNodeTypeColor(selectedNode.type) : null;
-  const shortLabel = selectedNode?.label?.split("\n")[0] ?? selectedNode?.label;
+  const shortLabel = selectedNode?.fullLabel ?? selectedNode?.label?.split("\n")[0] ?? selectedNode?.label;
+  const nodeLabel = selectedNode?.label?.split("\n")[0] ?? selectedNode?.label;
   const canExpand = selectedNode?.expandable && !selectedNode?.expanded;
   const canCollapse = !!selectedNode?.expanded;
   const canFindSimilar =
@@ -36,7 +37,7 @@ export default function GraphStatusBar({
             />
             <span className="bloom-status-type">{selectedNode.type}</span>
             <span className="bloom-status-label" title={shortLabel}>
-              {shortLabel}
+              {nodeLabel}
             </span>
           </span>
           {canExpand && (

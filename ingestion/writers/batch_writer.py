@@ -6,6 +6,7 @@ from typing import Any
 
 from ingestion.config import INGEST_CYPHER_BATCH_SIZE
 from ingestion.mappers.bundle_mapper import GraphPayload
+from ingestion.patient_ids import allocate_patient_ids_tx
 
 BATCH = INGEST_CYPHER_BATCH_SIZE
 
@@ -43,6 +44,28 @@ def _chunks(items: list, size: int):
 
 def _run(tx, query: str, **params: Any) -> None:
     tx.run(query, **params)
+
+
+def _write_patient_nodes(tx, rows: list[dict[str, Any]]) -> None:
+    if not rows:
+        return
+    prepared = [
+        {"fhirId": row["fhirId"], "props": {k: v for k, v in row.items() if k != "fhirId"}}
+        for row in rows
+    ]
+    merged_ids: list[str] = []
+    for batch in _chunks(prepared, BATCH):
+        _run(
+            tx,
+            """
+            UNWIND $rows AS row
+            MERGE (n:Patient {fhirId: row.fhirId})
+            SET n += row.props
+            """,
+            rows=batch,
+        )
+        merged_ids.extend(row["fhirId"] for row in batch)
+    allocate_patient_ids_tx(tx, merged_ids)
 
 
 def _write_nodes(tx, label: str, rows: list[dict[str, Any]]) -> None:
@@ -205,7 +228,10 @@ def _write_location_links(tx, links: list[dict[str, str]]) -> None:
 def write_payload_tx(tx, payload: GraphPayload, *, concepts_premerged: bool = False) -> None:
     """Write one patient payload inside an existing transaction."""
     for label in LABELS:
-        _write_nodes(tx, label, payload.nodes.get(label, []))
+        if label == "Patient":
+            _write_patient_nodes(tx, payload.nodes.get(label, []))
+        else:
+            _write_nodes(tx, label, payload.nodes.get(label, []))
 
     _write_patient_links(tx, payload.patient_links)
     if concepts_premerged:

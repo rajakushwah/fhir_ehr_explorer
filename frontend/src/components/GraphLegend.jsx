@@ -69,7 +69,7 @@ export default function GraphLegend({ minimized, onToggleMinimize }) {
         ))}
       </ul>
       <p className="legend-hint">
-        Thin blue border = expandable · Double-click to explore
+        Double-click a node to expand · Click to select
       </p>
     </aside>
   );

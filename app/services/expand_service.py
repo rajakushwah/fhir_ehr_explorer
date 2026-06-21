@@ -129,7 +129,7 @@ def build_patients(
             MATCH (concept)<-[:CODED_AS]-(c:Condition)<-[:HAS_CONDITION]-(p:Patient)
             WHERE ($gender IS NULL OR p.gender = $gender)
               AND ($state IS NULL OR p.state = $state)
-            RETURN DISTINCT p.fhirId AS fhirId, p.name AS name, p.gender AS gender, p.state AS state
+            RETURN DISTINCT p.fhirId AS fhirId, p.patientId AS patientId, p.name AS name, p.gender AS gender, p.state AS state
             ORDER BY p.fhirId
             LIMIT $limit
             """,
@@ -143,6 +143,10 @@ def build_patients(
                 "id": f"ui:patient|{r['fhirId']}",
                 "type": "Patient",
                 "label": patient_graph_label(dict(r)),
+                "name": r.get("name"),
+                "patientId": r.get("patientId"),
+                "gender": r.get("gender"),
+                "state": r.get("state"),
                 "expandable": True,
                 "context": {"patientFhirId": r["fhirId"]},
             }) for r in res]

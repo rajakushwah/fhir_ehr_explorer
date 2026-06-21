@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 
 def patient_location_where(p_alias: str = "p") -> str:
-    """AND clauses for gender + city + state + country (all optional, combined with AND)."""
+    """AND clauses for gender + city + state + country + patient ID (all optional)."""
     return f"""
     WHERE ($gender IS NULL OR {p_alias}.gender = $gender)
       AND ($state IS NULL OR toLower(coalesce({p_alias}.state,'')) CONTAINS toLower($state)
@@ -15,6 +15,9 @@ def patient_location_where(p_alias: str = "p") -> str:
            OR toLower(coalesce({p_alias}.city,'')) = toLower($city))
       AND ($country IS NULL OR toLower(coalesce({p_alias}.country,'')) CONTAINS toLower($country)
            OR toLower(coalesce({p_alias}.country,'')) = toLower($country))
+      AND ($patientId IS NULL OR
+           (toInteger($patientId) IS NOT NULL AND {p_alias}.patientId = toInteger($patientId)) OR
+           toLower({p_alias}.fhirId) CONTAINS toLower($patientId))
     """
 
 
@@ -37,6 +40,7 @@ def location_params(
     state: Optional[str] = None,
     city: Optional[str] = None,
     country: Optional[str] = None,
+    patient_id: Optional[str] = None,
     concept_system: Optional[str] = None,
     concept_code: Optional[str] = None,
     extra: Optional[dict[str, Any]] = None,
@@ -46,6 +50,7 @@ def location_params(
         "state": state,
         "city": city,
         "country": country,
+        "patientId": patient_id.strip() if patient_id else None,
         "conceptSystem": concept_system,
         "conceptCode": concept_code,
     }
@@ -60,4 +65,5 @@ def filters_from_parsed(parsed) -> dict[str, Any]:
         "state": parsed.state,
         "city": parsed.city,
         "country": getattr(parsed, "country", None),
+        "patientId": getattr(parsed, "patient_id", None),
     }

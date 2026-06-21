@@ -42,6 +42,8 @@ def _merge_filters(req: CohortSearchRequest) -> ParsedCohort:
         parsed.country = req.country
     if req.gender:
         parsed.gender = req.gender.lower()
+    if req.patientId:
+        parsed.patient_id = req.patientId.strip() or None
     if req.minAge is not None:
         parsed.min_age = req.minAge
     if req.maxAge is not None:
@@ -143,6 +145,7 @@ def _build_list_response(parsed, concept, patients, total_matched, limit, offset
         city=parsed.city,
         country=parsed.country,
         gender=parsed.gender,
+        patientId=parsed.patient_id,
         minAge=parsed.min_age,
         maxAge=parsed.max_age,
     )
@@ -180,6 +183,7 @@ def _search_critical(session, parsed, critical, concept, limit, offset) -> Cohor
         city=parsed.city,
         country=parsed.country,
         gender=parsed.gender,
+        patientId=parsed.patient_id,
         minAge=parsed.min_age,
         maxAge=parsed.max_age,
         criticalMode=critical.severity,
@@ -216,6 +220,7 @@ def _search_aggregation(session, agg, parsed, concept) -> CohortSearchResponse:
         city=parsed.city,
         country=parsed.country,
         gender=parsed.gender,
+        patientId=parsed.patient_id,
         minAge=parsed.min_age,
         maxAge=parsed.max_age,
     )
@@ -266,7 +271,7 @@ def _fetch_patient_list(session, parsed, concept, limit, offset=0):
             WITH DISTINCT p
             OPTIONAL MATCH (p)-[:HAS_CONDITION]->(c2:Condition)-[:CODED_AS]->(cx:Concept)
             WITH p, collect(DISTINCT coalesce(cx.display, cx.text))[..5] AS conditions
-            RETURN p.fhirId AS fhirId, p.gender AS gender, p.state AS state,
+            RETURN p.fhirId AS fhirId, p.patientId AS patientId, p.name AS name, p.gender AS gender, p.state AS state,
                    p.city AS city, p.country AS country, p.birthDate AS birthDate, conditions
             {order_clause}
             """,
@@ -275,6 +280,7 @@ def _fetch_patient_list(session, parsed, concept, limit, offset=0):
                 state=parsed.state,
                 city=parsed.city,
                 country=parsed.country,
+                patient_id=parsed.patient_id,
                 concept_system=concept["system"],
                 concept_code=concept["code"],
                 extra={"limit": limit, "offset": offset},
@@ -287,7 +293,7 @@ def _fetch_patient_list(session, parsed, concept, limit, offset=0):
             {patient_location_where()}
             OPTIONAL MATCH (p)-[:HAS_CONDITION]->(:Condition)-[:CODED_AS]->(cx:Concept)
             WITH p, collect(DISTINCT coalesce(cx.display, cx.text))[..5] AS conditions
-            RETURN p.fhirId AS fhirId, p.gender AS gender, p.state AS state,
+            RETURN p.fhirId AS fhirId, p.patientId AS patientId, p.name AS name, p.gender AS gender, p.state AS state,
                    p.city AS city, p.country AS country, p.birthDate AS birthDate, conditions
             {order_clause}
             """,
@@ -296,6 +302,7 @@ def _fetch_patient_list(session, parsed, concept, limit, offset=0):
                 state=parsed.state,
                 city=parsed.city,
                 country=parsed.country,
+                patient_id=parsed.patient_id,
                 extra={"limit": limit, "offset": offset},
             ),
         )
@@ -310,6 +317,8 @@ def _fetch_patient_list(session, parsed, concept, limit, offset=0):
         patients.append(
             PatientSummary(
                 fhirId=r["fhirId"],
+                patientId=r.get("patientId"),
+                name=r.get("name"),
                 gender=r.get("gender"),
                 state=r.get("state"),
                 city=r.get("city"),
@@ -354,9 +363,11 @@ def get_filter_options() -> dict[str, Any]:
         conditions = [dict(r) for r in session.run(
             """
             MATCH (c:Concept)<-[:CODED_AS]-(:Condition)
-            RETURN c.system AS conceptSystem, c.code AS conceptCode,
-                   coalesce(c.display, c.text) AS label
-            ORDER BY label LIMIT 40
+            WITH coalesce(c.display, c.text) AS label, c
+            ORDER BY label, c.code
+            WITH label, collect({conceptSystem: c.system, conceptCode: c.code})[0] AS pick
+            RETURN pick.conceptSystem AS conceptSystem, pick.conceptCode AS conceptCode, label
+            ORDER BY label LIMIT 50
             """
         )]
     return {

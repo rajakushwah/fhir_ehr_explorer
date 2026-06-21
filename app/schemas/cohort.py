@@ -10,6 +10,7 @@ class CohortSearchRequest(BaseModel):
     city: Optional[str] = None
     country: Optional[str] = None
     gender: Optional[str] = None
+    patientId: Optional[str] = None
     minAge: Optional[int] = None
     maxAge: Optional[int] = None
     limit: int = Field(default=50, ge=1, le=200)
@@ -22,6 +23,7 @@ class ParsedFilters(BaseModel):
     city: Optional[str] = None
     country: Optional[str] = None
     gender: Optional[str] = None
+    patientId: Optional[str] = None
     minAge: Optional[int] = None
     maxAge: Optional[int] = None
     criticalMode: Optional[str] = None
@@ -39,6 +41,8 @@ class CriticalFinding(BaseModel):
 
 class PatientSummary(BaseModel):
     fhirId: str
+    patientId: Optional[int] = None
+    name: Optional[str] = None
     gender: Optional[str] = None
     state: Optional[str] = None
     city: Optional[str] = None

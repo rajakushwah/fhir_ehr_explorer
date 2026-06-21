@@ -24,7 +24,15 @@ def cohort_filters():
 
 @router.post("/search", response_model=CohortSearchResponse)
 def cohort_search(req: CohortSearchRequest):
-    if not req.query and not any([req.condition, req.state, req.city, req.gender]):
+    has_filter = any([
+        req.condition,
+        req.state,
+        req.city,
+        req.country,
+        req.gender,
+        req.patientId and req.patientId.strip(),
+    ])
+    if not req.query and not has_filter:
         raise HTTPException(status_code=400, detail="Provide a query or at least one filter")
 
     with timed_step(
@@ -34,6 +42,7 @@ def cohort_search(req: CohortSearchRequest):
         condition=req.condition,
         state=req.state,
         gender=req.gender,
+        patientId=req.patientId,
     ) as metrics:
         try:
             result = search_cohort(req)

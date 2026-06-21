@@ -169,7 +169,7 @@ const LABEL_LIMITS = {
   Encounter: 14,
   Gender: 18,
   Region: 18,
-  Patient: 16,
+  Patient: 22,
   Concept: 18,
   PatientGroup: 18,
   ClinicalCategory: 16,
@@ -182,8 +182,26 @@ function truncateForNode(label, type) {
   return `${cleaned.slice(0, max - 1)}…`;
 }
 
+/** Prefer patient name; strip legacy "#16124 Name" labels from older API responses. */
+function patientNodeLabel(data) {
+  const name = (data.name || "").trim();
+  if (name) return name;
+  const label = (data.label || "").trim();
+  const legacy = label.match(/^#\d+\s+(.+)$/);
+  if (legacy) return legacy[1];
+  return label;
+}
+
 export function ensureShortLabel(data) {
-  const label = data.label || data.type || "Node";
-  const short = data.shortLabel || truncateForNode(label, data.type);
-  return { ...data, label, shortLabel: short, fullLabel: data.fullLabel || label };
+  const rawLabel = data.label || data.type || "Node";
+  const label = data.type === "Patient" ? patientNodeLabel(data) : rawLabel;
+  const short =
+    data.type === "Patient"
+      ? truncateForNode(label, data.type)
+      : data.shortLabel || truncateForNode(rawLabel, data.type);
+  const fullLabel =
+    data.type === "Patient"
+      ? data.fullLabel || label
+      : data.fullLabel || rawLabel;
+  return { ...data, label, shortLabel: short, fullLabel };
 }

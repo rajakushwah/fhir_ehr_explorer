@@ -104,7 +104,7 @@ def build_place_patients(context: dict[str, Any]) -> list[dict]:
               AND ($state IS NULL OR p.state IS NULL OR toLower(p.state) = toLower($state))
               AND ($country IS NULL OR p.country IS NULL OR toLower(p.country) = toLower($country))
               AND ($exclude IS NULL OR p.fhirId <> $exclude)
-            RETURN DISTINCT p.fhirId AS fhirId, p.name AS name, p.gender AS gender, p.state AS state, p.city AS city
+            RETURN DISTINCT p.fhirId AS fhirId, p.patientId AS patientId, p.name AS name, p.gender AS gender, p.state AS state, p.city AS city
             ORDER BY p.fhirId
             LIMIT $limit
             """,
@@ -119,6 +119,11 @@ def build_place_patients(context: dict[str, Any]) -> list[dict]:
         "id": f"ui:patient|{r['fhirId']}",
         "type": "Patient",
         "label": patient_graph_label(dict(r)),
+        "name": r.get("name"),
+        "patientId": r.get("patientId"),
+        "gender": r.get("gender"),
+        "city": r.get("city"),
+        "state": r.get("state"),
         "expandable": True,
         "context": {"patientFhirId": r["fhirId"]},
         "meta": {"shared": True},
@@ -204,7 +209,7 @@ def build_shared_concept_patients(context: dict[str, Any]) -> list[dict]:
             MATCH (concept:Concept {{system: $system, code: $code}})
             MATCH (concept)<-[:CODED_AS]-(:{label})<-[:{rel}]-(p:Patient)
             WHERE ($exclude IS NULL OR p.fhirId <> $exclude)
-            RETURN DISTINCT p.fhirId AS fhirId, p.name AS name, p.gender AS gender, p.city AS city, p.state AS state
+            RETURN DISTINCT p.fhirId AS fhirId, p.patientId AS patientId, p.name AS name, p.gender AS gender, p.city AS city, p.state AS state
             ORDER BY p.fhirId
             LIMIT $limit
             """,
@@ -218,6 +223,11 @@ def build_shared_concept_patients(context: dict[str, Any]) -> list[dict]:
         "id": f"ui:patient|{r['fhirId']}",
         "type": "Patient",
         "label": patient_graph_label(dict(r)),
+        "name": r.get("name"),
+        "patientId": r.get("patientId"),
+        "gender": r.get("gender"),
+        "city": r.get("city"),
+        "state": r.get("state"),
         "expandable": True,
         "context": {"patientFhirId": r["fhirId"]},
         "meta": {"shared": True, "viaConcept": True},

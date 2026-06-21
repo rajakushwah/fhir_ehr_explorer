@@ -258,6 +258,26 @@ def backfill_patient_names(
     )
 
 
+@app.command("backfill-patient-ids")
+def backfill_patient_ids_cmd(
+    start: int = typer.Option(16101, help="First patientId to assign when none exist yet"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation"),
+):
+    """Assign sequential short patientId values (16101, 16102, …) to Patient nodes."""
+    if not yes and not typer.confirm(
+        f"Assign short patient IDs starting from {start} to patients missing patientId?"
+    ):
+        raise typer.Abort()
+
+    from ingestion.patient_ids import backfill_patient_ids
+
+    with get_session() as session:
+        result = backfill_patient_ids(session, start=start)
+    typer.echo(f"Assigned patientId to {result['updated']:,} patients.")
+    if result["maxId"] is not None:
+        typer.echo(f"Highest patientId is {result['maxId']:,}.")
+
+
 @app.command("load-bulk")
 def load_bulk(
     input_dir: Path = typer.Argument(..., help="Directory of Synthea patient Bundle JSON files"),

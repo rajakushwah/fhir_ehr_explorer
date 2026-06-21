@@ -244,6 +244,7 @@ Watch: Neo4j memory, API response time, disk on Neo4j volume.
 |---------|-----|
 | `/health` shows `neo4j: false` | Check `NEO4J_URI`, credentials, firewall to Neo4j |
 | Blank UI | Run `npm run build` — `frontend/dist/` must exist |
+| Broken logo / missing `/hekma-logo.svg` | Redeploy after backend fix — Uvicorn must serve files from `frontend/dist/`, not only `/assets/` |
 | Empty search/graph | Run ingest or restore Neo4j data |
 | 502 from proxy | Confirm Uvicorn running on port 8002 |
 

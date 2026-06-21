@@ -50,6 +50,18 @@ app.include_router(cohort.router, tags=["COHORT"])
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 
 
+def _safe_dist_file(relative_path: str) -> Path | None:
+    """Resolve a path under frontend/dist, rejecting traversal outside dist."""
+    if not relative_path or relative_path.startswith(("/", "\\")):
+        return None
+    candidate = (FRONTEND_DIST / relative_path).resolve()
+    try:
+        candidate.relative_to(FRONTEND_DIST.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 @app.get("/health")
 def health():
     neo4j = connectivity_status()
@@ -66,6 +78,9 @@ if FRONTEND_DIST.is_dir():
     if assets_dir.is_dir():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
-    @app.get("/")
-    def serve_frontend():
+    @app.get("/{full_path:path}")
+    def serve_frontend(full_path: str = ""):
+        static_file = _safe_dist_file(full_path)
+        if static_file:
+            return FileResponse(static_file)
         return FileResponse(FRONTEND_DIST / "index.html")

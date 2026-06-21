@@ -64,6 +64,7 @@ def count_critical_patients(
             state=parsed.state,
             city=parsed.city,
             country=parsed.country,
+            patient_id=parsed.patient_id,
             concept_system=concept["system"] if concept else None,
             concept_code=concept["code"] if concept else None,
         ),
@@ -91,6 +92,7 @@ def search_critical_patients(
             state=parsed.state,
             city=parsed.city,
             country=parsed.country,
+            patient_id=parsed.patient_id,
             concept_system=concept["system"] if concept else None,
             concept_code=concept["code"] if concept else None,
             extra={"limit": limit, "offset": offset},
@@ -122,6 +124,8 @@ def search_critical_patients(
 
         patients.append(PatientSummary(
             fhirId=r["fhirId"],
+            patientId=r.get("patientId"),
+            name=r.get("name"),
             gender=r.get("gender"),
             state=r.get("state"),
             city=r.get("city"),
@@ -189,7 +193,7 @@ def _search_cypher(concept: Optional[dict[str, Any]]) -> str:
     }) AS findings
     OPTIONAL MATCH (p)-[:HAS_CONDITION]->(:Condition)-[:CODED_AS]->(cx:Concept)
     WITH p, findings, collect(DISTINCT coalesce(cx.display, cx.text))[..5] AS conditions
-    RETURN p.fhirId AS fhirId, p.gender AS gender, p.state AS state,
+    RETURN p.fhirId AS fhirId, p.patientId AS patientId, p.name AS name, p.gender AS gender, p.state AS state,
            p.city AS city, p.country AS country, p.birthDate AS birthDate, conditions, findings
     ORDER BY size(findings) DESC, p.fhirId
     SKIP $offset LIMIT $limit

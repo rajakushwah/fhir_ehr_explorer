@@ -31,6 +31,7 @@ def _patient_params(parsed: ParsedCohort, extra: Optional[dict] = None) -> dict[
         state=parsed.state,
         city=parsed.city,
         country=parsed.country,
+        patient_id=parsed.patient_id,
         extra=extra,
     )
 

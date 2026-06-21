@@ -11,6 +11,7 @@ from app.services.analytics_clustering import (
     connected_communities,
 )
 from app.services.location_filters import patient_location_where
+from app.services.graph_labels import wrap_graph_node
 from app.services.patient_display import patient_graph_label
 
 CONCEPT_ID_PREFIX = "concept"
@@ -34,6 +35,7 @@ def _cohort_match(filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         "state": filters.get("state"),
         "city": filters.get("city"),
         "country": filters.get("country"),
+        "patientId": filters.get("patientId"),
         "conceptSystem": filters.get("conceptSystem"),
         "conceptCode": filters.get("conceptCode"),
     }
@@ -242,6 +244,7 @@ def find_similar_patients(
             """
             MATCH (anchor:Patient {fhirId: $patientFhirId})
             RETURN anchor.fhirId AS fhirId,
+                   anchor.patientId AS patientId,
                    anchor.name AS name,
                    anchor.gender AS gender,
                    anchor.city AS city,
@@ -286,6 +289,7 @@ def find_similar_patients(
             ORDER BY score DESC, sharedCount DESC, p.fhirId
             LIMIT $limit
             RETURN p.fhirId AS fhirId,
+                   p.patientId AS patientId,
                    p.name AS name,
                    p.gender AS gender,
                    p.city AS city,
@@ -303,6 +307,7 @@ def find_similar_patients(
     anchor_patient = {
         "fhirId": anchor_props["fhirId"],
         "name": anchor_props.get("name"),
+        "patientId": anchor_props.get("patientId"),
         "gender": anchor_props.get("gender"),
         "city": anchor_props.get("city"),
         "state": anchor_props.get("state"),
@@ -311,16 +316,19 @@ def find_similar_patients(
 
     patients: list[dict[str, Any]] = []
     graph_nodes: list[dict[str, Any]] = [
-        {
+        wrap_graph_node({
             "id": f"ui:patient|{anchor_patient['fhirId']}",
             "type": "Patient",
             "label": anchor_patient["label"],
-            "shortLabel": anchor_patient["label"],
-            "fullLabel": anchor_patient["label"],
+            "name": anchor_patient.get("name"),
+            "patientId": anchor_patient.get("patientId"),
+            "gender": anchor_patient.get("gender"),
+            "city": anchor_patient.get("city"),
+            "state": anchor_patient.get("state"),
             "expandable": True,
             "context": {"patientFhirId": anchor_patient["fhirId"]},
             "meta": {"anchor": True},
-        }
+        })["data"]
     ]
     graph_edges: list[dict[str, Any]] = []
 
@@ -330,6 +338,7 @@ def find_similar_patients(
         patient = {
             "fhirId": props["fhirId"],
             "name": props.get("name"),
+            "patientId": props.get("patientId"),
             "gender": props.get("gender"),
             "city": props.get("city"),
             "state": props.get("state"),
@@ -342,12 +351,15 @@ def find_similar_patients(
         }
         patients.append(patient)
         node_id = f"ui:patient|{patient['fhirId']}"
-        graph_nodes.append({
+        node_data = wrap_graph_node({
             "id": node_id,
             "type": "Patient",
             "label": patient["label"],
-            "shortLabel": patient["label"],
-            "fullLabel": f"{patient['label']}\n(similarity {int(score * 100)}%)",
+            "name": patient.get("name"),
+            "patientId": patient.get("patientId"),
+            "gender": patient.get("gender"),
+            "city": patient.get("city"),
+            "state": patient.get("state"),
             "expandable": True,
             "context": {"patientFhirId": patient["fhirId"]},
             "meta": {
@@ -355,7 +367,9 @@ def find_similar_patients(
                 "sharedCount": patient["sharedCount"],
                 "sharedConditions": patient["sharedConditions"],
             },
-        })
+        })["data"]
+        node_data["fullLabel"] = f"{node_data['fullLabel']}\n(similarity {int(score * 100)}%)"
+        graph_nodes.append(node_data)
         graph_edges.append({
             "id": f"similar|{anchor_patient['fhirId']}|{patient['fhirId']}",
             "source": f"ui:patient|{anchor_patient['fhirId']}",
@@ -390,6 +404,7 @@ def get_concept_cohort_patients(
             match
             + """
             RETURN DISTINCT p.fhirId AS fhirId,
+                   p.patientId AS patientId,
                    p.name AS name,
                    p.gender AS gender,
                    p.city AS city,
@@ -405,6 +420,7 @@ def get_concept_cohort_patients(
             MATCH (p)-[:HAS_CONDITION]->(:Condition)-[:CODED_AS]->(target:Concept)
             WHERE target.system = $targetSystem AND target.code = $targetCode
             RETURN DISTINCT p.fhirId AS fhirId,
+                   p.patientId AS patientId,
                    p.name AS name,
                    p.gender AS gender,
                    p.city AS city,
@@ -428,6 +444,7 @@ def get_concept_cohort_patients(
         entry = {
             "fhirId": props["fhirId"],
             "name": props.get("name"),
+            "patientId": props.get("patientId"),
             "gender": props.get("gender"),
             "city": props.get("city"),
             "state": props.get("state"),
@@ -460,19 +477,22 @@ def get_concept_cohort_patients(
     all_patients = with_patients + without_patients
     for patient in all_patients:
         node_id = f"ui:patient|{patient['fhirId']}"
-        graph_nodes.append({
+        graph_nodes.append(wrap_graph_node({
             "id": node_id,
             "type": "Patient",
             "label": patient["label"],
-            "shortLabel": patient["label"],
-            "fullLabel": patient["label"],
+            "name": patient.get("name"),
+            "patientId": patient.get("patientId"),
+            "gender": patient.get("gender"),
+            "city": patient.get("city"),
+            "state": patient.get("state"),
             "expandable": True,
             "context": {"patientFhirId": patient["fhirId"]},
             "meta": {
                 "hasCondition": patient["hasCondition"],
                 "drilldownPatient": True,
             },
-        })
+        })["data"])
         if patient["hasCondition"]:
             graph_edges.append({
                 "id": f"drill|{patient['fhirId']}|{concept_code}",
